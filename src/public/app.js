@@ -7,7 +7,8 @@ let currentMainView = 'pages-view';
 let searchQuery = '';
 let selectedResult = null;
 let timerInterval = null;
-let startTime = null;
+let accumulatedElapsedMs = 0;
+let sessionStartTime = null;
 
 // Sort States
 let pagesSort = { column: 'id', direction: 'asc' };
@@ -65,7 +66,7 @@ const crawlTableBody = document.getElementById('crawlTableBody');
 const allLinksTableBody = document.getElementById('allLinksTableBody');
 const contentExplorerLayout = document.getElementById('contentExplorerLayout');
 
-// Table & Filtering
+// Search and Filter Elements
 const tableSearch = document.getElementById('tableSearch');
 const filterTabs = document.querySelectorAll('#pageFilterTabs .tab-pill');
 const linkFilterTabs = document.querySelectorAll('#linkFilterTabs .tab-pill');
@@ -73,10 +74,9 @@ const linkFilterTabs = document.querySelectorAll('#linkFilterTabs .tab-pill');
 // Modal Elements
 const detailModal = document.getElementById('detailModal');
 const closeModalBtn = document.getElementById('closeModalBtn');
-const modalPageUrl = document.getElementById('modalPageUrl');
-const modalStatusBadge = document.getElementById('modalStatusBadge');
+const modalUrl = document.getElementById('modalUrl');
 const modalTitle = document.getElementById('modalTitle');
-const modalDescription = document.getElementById('modalDescription');
+const modalMetaDesc = document.getElementById('modalMetaDesc');
 const modalCanonical = document.getElementById('modalCanonical');
 const modalRobots = document.getElementById('modalRobots');
 const modalH1 = document.getElementById('modalH1');
@@ -141,6 +141,8 @@ function initEventSource() {
     evtSource.addEventListener('started', () => {
       crawlResults = [];
       allDiscoveredLinks = [];
+      accumulatedElapsedMs = 0;
+      sessionStartTime = null;
       renderCurrentViews();
       updateUIStatus('running');
       startTimer();
@@ -169,7 +171,7 @@ function initEventSource() {
 
     evtSource.addEventListener('paused', () => {
       updateUIStatus('paused');
-      stopTimer();
+      stopTimer(true);
     });
 
     evtSource.addEventListener('resumed', () => {
@@ -180,7 +182,7 @@ function initEventSource() {
 
     evtSource.addEventListener('stopped', () => {
       updateUIStatus('completed');
-      stopTimer();
+      stopTimer(true);
       stopPolling();
     });
 
@@ -189,10 +191,10 @@ function initEventSource() {
       allDiscoveredLinks = [];
       searchQuery = '';
       tableSearch.value = '';
-      stopTimer();
+      stopTimer(false);
       stopPolling();
       statElapsedTime.textContent = '00:00';
-      startTime = null;
+      statSpeed.textContent = '0.0 req/min';
       updateStats({
         pagesCrawled: 0,
         pagesQueued: 0,
@@ -209,7 +211,7 @@ function initEventSource() {
       const data = JSON.parse(e.data);
       updateStats(data.stats, 0);
       updateUIStatus('completed');
-      stopTimer();
+      stopTimer(true);
       stopPolling();
       renderCurrentViews();
     });
@@ -238,8 +240,13 @@ function startPolling() {
       }
 
       if (statusData.isRunning) {
-        updateUIStatus('running');
-        startTimer();
+        if (statusData.isPaused) {
+          updateUIStatus('paused');
+          stopTimer(true);
+        } else {
+          updateUIStatus('running');
+          startTimer();
+        }
         
         // Fetch incremental results
         const resList = await fetch('/api/crawler/results');
@@ -260,9 +267,9 @@ function startPolling() {
             renderCurrentViews();
           }
         }
-      } else if (!statusData.isRunning && crawlResults.length > 0 && statusBadge.classList.contains('running')) {
+      } else if (!statusData.isRunning && crawlResults.length > 0 && (statusBadge.classList.contains('running') || statusBadge.classList.contains('paused'))) {
         updateUIStatus('completed');
-        stopTimer();
+        stopTimer(true);
         stopPolling();
         renderCurrentViews();
       }
@@ -295,11 +302,13 @@ function updateUIStatus(state) {
     statusText.textContent = 'Audit Complete';
     startBtn.disabled = false;
     pauseBtn.disabled = true;
+    pauseBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
     stopBtn.disabled = true;
   } else {
     statusText.textContent = 'System Ready';
     startBtn.disabled = false;
     pauseBtn.disabled = true;
+    pauseBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
     stopBtn.disabled = true;
   }
 }
@@ -318,40 +327,42 @@ function updateStats(stats, queueLength) {
   statProgress.textContent = `${percentProgress}% of limit (${maxPages})`;
 
   const customCount = stats.customDetectedCount || 0;
+  statCustomCount.textContent = customCount.toLocaleString();
   const customPercent = stats.pagesCrawled > 0 ? Math.round((customCount / stats.pagesCrawled) * 100) : 0;
-  statCustomPercent.textContent = `${customPercent}%`;
-  statCustomCount.textContent = customCount;
+  statCustomPercent.textContent = `${customPercent}% of crawled`;
 
-  viewCountPages.textContent = crawlResults.length;
-  viewCountLinks.textContent = allDiscoveredLinks.length;
+  viewCountPages.textContent = stats.pagesCrawled;
+  viewCountLinks.textContent = stats.internalLinksCount + stats.externalLinksCount;
 
-  updateFilterCounts();
-}
+  // Filter Counts
+  const elAll = document.getElementById('filterCountAll');
+  if (elAll) elAll.textContent = stats.pagesCrawled;
+  const elCustom = document.getElementById('filterCountCustom');
+  if (elCustom) elCustom.textContent = customCount;
+  const elMissing = document.getElementById('filterCountMissingCustom');
+  if (elMissing) elMissing.textContent = Math.max(0, stats.pagesCrawled - customCount);
+  const elErr = document.getElementById('filterCountError');
+  if (elErr) elErr.textContent = stats.errorsCount;
 
-function updateFilterCounts() {
-  const total = crawlResults.length;
-  const ok200 = crawlResults.filter(r => r.statusCode === 200).length;
-  const custom = crawlResults.filter(r => r.customContent?.detected).length;
-  const missingCustom = crawlResults.filter(r => !r.customContent?.detected).length;
-  const errors = crawlResults.filter(r => (r.statusCode >= 400 || r.error)).length;
+  // Calculate Link Filters for Link sub-tabs
+  let internalLinks = 0;
+  let externalLinks = 0;
+  let inContentLinks = 0;
+  let ok200Links = 0;
+  let errLinks = 0;
+  let nofollowLinks = 0;
 
-  document.getElementById('filterCountAll').textContent = total;
-  document.getElementById('filterCount200').textContent = ok200;
-  document.getElementById('filterCountCustom').textContent = custom;
-  document.getElementById('filterCountMissingCustom').textContent = missingCustom;
-  document.getElementById('filterCountError').textContent = errors;
+  for (const l of allDiscoveredLinks) {
+    if (l.isInternal) internalLinks++;
+    else externalLinks++;
+    if (l.isInsideCustom) inContentLinks++;
+    if (l.statusCode === 200) ok200Links++;
+    if (l.statusCode >= 400) errLinks++;
+    if (l.isNofollow) nofollowLinks++;
+  }
 
-  // Discovered Links Filter Counts
-  const totalLinks = allDiscoveredLinks.length;
-  const internalLinks = allDiscoveredLinks.filter(l => l.linkType === 'Internal').length;
-  const externalLinks = allDiscoveredLinks.filter(l => l.linkType === 'External').length;
-  const inContentLinks = allDiscoveredLinks.filter(l => l.isInsideCustom).length;
-  const ok200Links = allDiscoveredLinks.filter(l => l.statusCode === 200).length;
-  const errLinks = allDiscoveredLinks.filter(l => l.statusCode >= 400 || l.statusCode === 0 || l.statusCode === 500).length;
-  const nofollowLinks = allDiscoveredLinks.filter(l => l.isNofollow).length;
-
-  const elAll = document.getElementById('filterLinksAll');
-  if (elAll) elAll.textContent = totalLinks;
+  const elLinksAll = document.getElementById('filterLinksAll');
+  if (elLinksAll) elLinksAll.textContent = allDiscoveredLinks.length;
   const elInternal = document.getElementById('filterLinksInternal');
   if (elInternal) elInternal.textContent = internalLinks;
   const elExternal = document.getElementById('filterLinksExternal');
@@ -368,24 +379,32 @@ function updateFilterCounts() {
 
 function startTimer() {
   if (timerInterval) return;
-  if (!startTime) startTime = Date.now();
+  sessionStartTime = Date.now();
   timerInterval = setInterval(() => {
-    const elapsedSec = Math.floor((Date.now() - startTime) / 1000);
-    const mins = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
-    const secs = String(elapsedSec % 60).padStart(2, '0');
+    const currentSessionMs = sessionStartTime ? (Date.now() - sessionStartTime) : 0;
+    const totalElapsedSec = Math.floor((accumulatedElapsedMs + currentSessionMs) / 1000);
+    const mins = String(Math.floor(totalElapsedSec / 60)).padStart(2, '0');
+    const secs = String(totalElapsedSec % 60).padStart(2, '0');
     statElapsedTime.textContent = `${mins}:${secs}`;
     
-    if (elapsedSec > 0 && crawlResults.length > 0) {
-      const speed = Math.round((crawlResults.length / (elapsedSec / 60)) * 10) / 10;
+    if (totalElapsedSec > 0 && crawlResults.length > 0) {
+      const speed = Math.round((crawlResults.length / (totalElapsedSec / 60)) * 10) / 10;
       statSpeed.textContent = `${speed} req/min`;
     }
   }, 1000);
 }
 
-function stopTimer() {
+function stopTimer(freeze = false) {
   if (timerInterval) {
     clearInterval(timerInterval);
     timerInterval = null;
+  }
+  if (sessionStartTime) {
+    accumulatedElapsedMs += Date.now() - sessionStartTime;
+    sessionStartTime = null;
+  }
+  if (!freeze) {
+    accumulatedElapsedMs = 0;
   }
 }
 
@@ -958,10 +977,22 @@ crawlForm.addEventListener('submit', async (e) => {
 });
 
 pauseBtn.addEventListener('click', async () => {
-  if (pauseBtn.textContent.includes('Pause')) {
-    await fetch('/api/crawler/pause', { method: 'POST' });
-  } else {
-    await fetch('/api/crawler/resume', { method: 'POST' });
+  pauseBtn.disabled = true;
+  try {
+    if (pauseBtn.textContent.includes('Pause')) {
+      updateUIStatus('paused');
+      stopTimer(true);
+      await fetch('/api/crawler/pause', { method: 'POST' });
+    } else {
+      updateUIStatus('running');
+      startTimer();
+      startPolling();
+      await fetch('/api/crawler/resume', { method: 'POST' });
+    }
+  } catch (err) {
+    console.error('Pause/Resume toggle failed:', err);
+  } finally {
+    pauseBtn.disabled = false;
   }
 });
 
@@ -988,10 +1019,12 @@ resetBtn.addEventListener('click', async () => {
     }
   });
 
-  stopTimer();
+  stopTimer(false);
   stopPolling();
   statElapsedTime.textContent = '00:00';
-  startTime = null;
+  statSpeed.textContent = '0.0 req/min';
+  accumulatedElapsedMs = 0;
+  sessionStartTime = null;
 
   updateStats({
     pagesCrawled: 0,
