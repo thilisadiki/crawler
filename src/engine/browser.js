@@ -4,15 +4,6 @@ import fs from 'fs';
 import path from 'path';
 
 export function findChromiumExecutable() {
-  // 1. Try Playwright's default expected path
-  try {
-    const defaultPath = chromium.executablePath();
-    if (defaultPath && fs.existsSync(defaultPath)) {
-      return defaultPath;
-    }
-  } catch (e) {}
-
-  // 2. Search potential cache folders in Hostinger / Linux
   const candidateDirs = [
     '/home/u178924454/.cache/ms-playwright',
     path.join(process.env.HOME || '', '.cache/ms-playwright'),
@@ -20,26 +11,43 @@ export function findChromiumExecutable() {
     '/tmp/.cache/ms-playwright'
   ];
 
+  let headlessShellPath = null;
+  let standardChromePath = null;
+
   for (const baseDir of candidateDirs) {
     if (fs.existsSync(baseDir)) {
       try {
         const entries = fs.readdirSync(baseDir, { recursive: true });
         for (const entry of entries) {
           const fullPath = path.join(baseDir, String(entry));
+          if (fullPath.endsWith('/chrome-headless-shell-linux64/chrome-headless-shell') && fs.existsSync(fullPath)) {
+            headlessShellPath = fullPath;
+            break;
+          }
           if (
             (fullPath.endsWith('/chrome-linux64/chrome') || 
-             fullPath.endsWith('/chrome-headless-shell-linux64/chrome-headless-shell') || 
              fullPath.endsWith('/chrome-linux/chrome') ||
              fullPath.endsWith('/chrome.exe') ||
              fullPath.endsWith('/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing')) &&
             fs.existsSync(fullPath)
           ) {
-            return fullPath;
+            standardChromePath = fullPath;
           }
         }
       } catch (err) {}
     }
   }
+
+  // Prioritize headless shell (doesn't require desktop X11 / GTK libatk libraries)
+  if (headlessShellPath) return headlessShellPath;
+  if (standardChromePath) return standardChromePath;
+
+  try {
+    const defaultPath = chromium.executablePath();
+    if (defaultPath && fs.existsSync(defaultPath)) {
+      return defaultPath;
+    }
+  } catch (e) {}
 
   return null;
 }
@@ -89,6 +97,31 @@ export class BrowserManager {
       try {
         this.browser = await chromium.launch(launchOptions);
       } catch (err) {
+        console.warn('Standard Chromium launch failed (' + err.message + '). Attempting bundled cloud binary fallback...');
+        try {
+          const sparticuzChromium = (await import('@sparticuz/chromium')).default;
+          const sparticuzExe = await sparticuzChromium.executablePath();
+          if (sparticuzExe) {
+            console.log('Using standalone @sparticuz/chromium binary at:', sparticuzExe);
+            const sparticuzLaunchOptions = {
+              headless: true,
+              executablePath: sparticuzExe,
+              args: [
+                ...sparticuzChromium.args,
+                '--disable-blink-features=AutomationControlled',
+                '--disable-web-security',
+                '--no-sandbox',
+                '--disable-setuid-sandbox'
+              ]
+            };
+            if (this.proxy) sparticuzLaunchOptions.proxy = { server: this.proxy };
+            this.browser = await chromium.launch(sparticuzLaunchOptions);
+            return this.browser;
+          }
+        } catch (sparticuzErr) {
+          console.warn('@sparticuz/chromium fallback error:', sparticuzErr.message);
+        }
+
         if (err.message.includes("Executable doesn't exist") || err.message.includes("playwright install")) {
           console.warn('Chromium executable missing. Running automatic runtime install...');
           try {
@@ -101,7 +134,7 @@ export class BrowserManager {
             throw installErr;
           }
         } else {
-          console.warn('Initial Chromium launch failed, attempting fallback launch with --single-process:', err.message);
+          console.warn('Attempting single-process fallback launch:', err.message);
           launchOptions.args.push('--single-process');
           this.browser = await chromium.launch(launchOptions);
         }
