@@ -5,6 +5,7 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
+    "postinstall": "npx playwright install chromium",
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
