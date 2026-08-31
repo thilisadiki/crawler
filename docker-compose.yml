@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  omnicrawl:
+    build: .
+    container_name: omnicrawl-spider
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    shm_size: '2gb' # Recommended for concurrent headless browser tabs
