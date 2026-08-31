@@ -160,6 +160,167 @@ export class Extractor {
   }
 
   /**
+   * Fast, reliable HTML string parser using Cheerio (runs in any environment without browser dependencies)
+   */
+  static extractFromHtml(html, currentUrl, baseOrigin, options = {}) {
+    const customSelector = options.customSelector || '';
+    const cheerio = options.cheerio;
+    if (!cheerio) return {};
+
+    const $ = cheerio.load(html);
+
+    const getMeta = (name, attr = 'name') => {
+      return $(`meta[${attr}="${name}"]`).attr('content') || $(`meta[property="${name}"]`).attr('content') || '';
+    };
+
+    const title = ($('title').text() || '').trim();
+    const metaDescription = getMeta('description') || getMeta('og:description');
+    const canonical = $('link[rel="canonical"]').attr('href') || '';
+    const metaRobots = getMeta('robots') || getMeta('googlebot');
+    const ogTitle = getMeta('og:title');
+    const ogDescription = getMeta('og:description');
+    const ogImage = getMeta('og:image');
+    const ogType = getMeta('og:type');
+
+    const h1List = $('h1').map((_, el) => $(el).text().trim()).get().filter(Boolean);
+    const h2List = $('h2').map((_, el) => $(el).text().trim()).get().filter(Boolean);
+    const h3List = $('h3').map((_, el) => $(el).text().trim()).get().filter(Boolean);
+
+    let customFound = false;
+    let customText = '';
+    let customWordCount = 0;
+    let customHeadings = [];
+    let customElement = null;
+    let usedSelector = customSelector;
+
+    if (customSelector) {
+      try {
+        const el = $(customSelector);
+        if (el.length > 0) customElement = el.first();
+      } catch (e) {}
+    }
+
+    if (!customElement && !customSelector) {
+      const potentialSelectors = [
+        '.page-text',
+        '[class*="page-text"]',
+        '.seo-content',
+        '[class*="seo-content"]',
+        '[class*="seo_content"]',
+        '[class*="seoText"]',
+        '[class*="seo-text"]',
+        '[class*="kentico"]',
+        '#content',
+        '#seo-content',
+        '#seo-text',
+        '.seo-section',
+        '.bottom-seo',
+        '[data-seo-content]',
+        'article'
+      ];
+      for (const sel of potentialSelectors) {
+        const el = $(sel);
+        if (el.length > 0 && el.text().trim().length > 30) {
+          customElement = el.first();
+          usedSelector = sel;
+          break;
+        }
+      }
+    }
+
+    if (customElement) {
+      customFound = true;
+      customText = customElement.text().trim();
+      customWordCount = customText ? customText.split(/\s+/).filter(Boolean).length : 0;
+      customHeadings = customElement.find('h1, h2, h3, h4, h5, h6').map((_, h) => {
+        return `${h.tagName.toUpperCase()}: ${$(h).text().trim()}`;
+      }).get().filter(Boolean);
+    }
+
+    const links = [];
+    $('a[href]').each((_, a) => {
+      const $a = $(a);
+      const rawHref = $a.attr('href') || '';
+      let resolvedHref = rawHref;
+      try {
+        resolvedHref = new URL(rawHref, currentUrl).toString();
+      } catch (e) {}
+
+      const anchorText = ($a.text() || '').trim().replace(/\s+/g, ' ') || '[No Text]';
+      const rel = $a.attr('rel') || '';
+      const target = $a.attr('target') || '';
+      const isNofollow = rel.toLowerCase().includes('nofollow');
+      
+      let isInsideCustom = false;
+      if (customElement) {
+        isInsideCustom = $a.parents(usedSelector).length > 0 || $a.closest(customElement).length > 0;
+      }
+
+      let linkType = 'Internal';
+      let isValidHttp = false;
+
+      if (rawHref.startsWith('mailto:')) {
+        linkType = 'Mailto';
+      } else if (rawHref.startsWith('tel:')) {
+        linkType = 'Tel';
+      } else if (rawHref.startsWith('javascript:') || rawHref === '#') {
+        linkType = 'Anchor/Script';
+      } else {
+        try {
+          const urlObj = new URL(resolvedHref);
+          isValidHttp = urlObj.protocol === 'http:' || urlObj.protocol === 'https:';
+          linkType = (urlObj.origin === baseOrigin) ? 'Internal' : 'External';
+        } catch (e) {
+          linkType = 'Invalid';
+        }
+      }
+
+      links.push({
+        rawHref,
+        url: resolvedHref,
+        anchorText,
+        linkType,
+        rel,
+        target,
+        isNofollow,
+        isInsideCustom,
+        isValidHttp
+      });
+    });
+
+    const bodyText = $('body').text().trim();
+    const totalWords = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
+    const imagesCount = $('img').length;
+
+    return {
+      title,
+      metaDescription,
+      canonical,
+      metaRobots,
+      ogTitle,
+      ogDescription,
+      ogImage,
+      ogType,
+      h1List,
+      h2List,
+      h3List,
+      totalWords,
+      imagesCount,
+      fullPageText: bodyText,
+      fullPageTextSnippet: bodyText.slice(0, 1000),
+      customContent: {
+        detected: customFound,
+        selectorUsed: usedSelector,
+        wordCount: customWordCount,
+        fullText: customText || '',
+        textSnippet: customText || '',
+        headings: customHeadings
+      },
+      links
+    };
+  }
+
+  /**
    * Normalize URLs for deduplication and crawling
    */
   static normalizeUrl(rawUrl, baseUrl) {

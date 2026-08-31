@@ -3,6 +3,16 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+const localTmpDir = path.join(process.cwd(), '.tmp');
+try {
+  if (!fs.existsSync(localTmpDir)) {
+    fs.mkdirSync(localTmpDir, { recursive: true, mode: 0o755 });
+  }
+  process.env.TMPDIR = localTmpDir;
+  process.env.TMP = localTmpDir;
+  process.env.TEMP = localTmpDir;
+} catch (e) {}
+
 export function findChromiumExecutable() {
   const candidateDirs = [
     '/home/u178924454/.cache/ms-playwright',

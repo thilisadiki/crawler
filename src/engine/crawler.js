@@ -1,5 +1,6 @@
 import EventEmitter from 'events';
 import { URL } from 'url';
+import * as cheerio from 'cheerio';
 import { BrowserManager } from './browser.js';
 import { Extractor } from './extractor.js';
 import { RobotsParser } from './robots.js';
@@ -35,6 +36,7 @@ export class SiteCrawler extends EventEmitter {
     // Robots.txt
     this.respectRobotsTxt = options.respectRobotsTxt === true;
     this.robotsParser = null;
+    this.isBrowserMode = true;
 
     try {
       const parsedSeed = new URL(this.seedUrl);
@@ -49,37 +51,28 @@ export class SiteCrawler extends EventEmitter {
       this.rootDomain = '';
     }
 
-    // Resolve Geo Preset
-    if (this.region && this.region !== 'auto' && GEO_PRESETS[this.region]) {
-      this.geoPreset = GEO_PRESETS[this.region];
-    } else {
-      this.geoPreset = detectRegionFromUrl(this.seedUrl);
-    }
+    // Resolve Geo Settings
+    this.geo = this.resolveGeoSettings(this.seedUrl, this.region);
 
+    // Initialize Browser Manager
     this.browserManager = new BrowserManager({
-      headless: options.headless !== false,
-      userAgent: options.userAgent,
+      headless: true,
       proxy: this.proxy,
-      geo: this.geoPreset,
-      targetHostname: this.baseHostname,
-      blockCrossDomainRedirects: this.blockCrossDomainRedirects
+      geo: this.geo,
+      blockCrossDomainRedirects: this.blockCrossDomainRedirects,
+      targetHostname: this.baseHostname
     });
 
-    this.statusChecker = new LinkStatusChecker({
-      userAgent: options.userAgent,
-      geo: this.geoPreset
-    });
-
+    // Crawl State
+    this.isRunning = false;
+    this.isPaused = false;
+    this.isCancelled = false;
     this.queue = [];
     this.visited = new Set();
     this.queued = new Set();
     this.results = [];
-    this.allLinks = [];
-    
-    this.isRunning = false;
-    this.isPaused = false;
-    this.isCancelled = false;
 
+    // Crawl Statistics
     this.stats = {
       pagesCrawled: 0,
       pagesQueued: 0,
@@ -154,6 +147,13 @@ export class SiteCrawler extends EventEmitter {
 
     try {
       await this.browserManager.init();
+      this.isBrowserMode = true;
+    } catch (err) {
+      console.warn('Chromium initialization unavailable (' + err.message + '). Switching seamlessly to Ultra-Fast Direct DOM Engine!');
+      this.isBrowserMode = false;
+    }
+
+    try {
       await this.runWorkerPool();
     } catch (err) {
       console.error('Crawler execution error:', err);
@@ -163,7 +163,9 @@ export class SiteCrawler extends EventEmitter {
     } finally {
       this.stats.endTime = Date.now();
       this.isRunning = false;
-      await this.browserManager.close();
+      if (this.isBrowserMode) {
+        await this.browserManager.close().catch(() => {});
+      }
       this.emit('completed', { stats: this.stats, resultsCount: this.results.length });
     }
   }
@@ -194,12 +196,128 @@ export class SiteCrawler extends EventEmitter {
       }
       this.visited.add(item.url);
 
-      await this.processPage(item, workerId);
+      if (this.isBrowserMode) {
+        await this.processPage(item, workerId);
+      } else {
+        await this.processPageHttp(item, workerId);
+      }
 
       if (this.delayBetweenRequestsMs > 0 && this.queue.length > 0) {
         await new Promise(r => setTimeout(r, this.delayBetweenRequestsMs));
       }
     }
+  }
+
+  async processPageHttp(item, workerId) {
+    const { url, depth, sourceUrl } = item;
+    const pageStartTime = Date.now();
+
+    let crawlResult = {
+      id: this.stats.pagesCrawled + 1,
+      url,
+      depth,
+      sourceUrl,
+      statusCode: 200,
+      statusText: 'OK',
+      responseTimeMs: 0,
+      title: '',
+      metaDescription: '',
+      canonical: '',
+      metaRobots: '',
+      h1: '',
+      h1List: [],
+      h2List: [],
+      imagesCount: 0,
+      customContent: { detected: false, wordCount: 0, textSnippet: '', headings: [], selectorUsed: '' },
+      totalWords: 0,
+      internalLinksCount: 0,
+      externalLinksCount: 0,
+      customLinksCount: 0,
+      links: [],
+      error: null,
+      timestamp: new Date().toISOString()
+    };
+
+    try {
+      const geo = this.geo || {};
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': `${geo.locale || 'en-US'},en;q=0.9`,
+        'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"macOS"'
+      };
+      if (geo.ip) {
+        headers['X-Forwarded-For'] = geo.ip;
+        headers['Client-IP'] = geo.ip;
+      }
+
+      const response = await fetch(url, {
+        headers,
+        redirect: 'follow',
+        signal: AbortSignal.timeout(this.pageTimeoutMs)
+      });
+
+      crawlResult.statusCode = response.status;
+      crawlResult.statusText = response.statusText;
+      crawlResult.responseTimeMs = Date.now() - pageStartTime;
+
+      const html = await response.text();
+      const extracted = Extractor.extractFromHtml(html, response.url || url, this.baseOrigin, {
+        customSelector: this.customContentSelector,
+        cheerio
+      });
+
+      Object.assign(crawlResult, extracted);
+      crawlResult.h1 = (extracted.h1List && extracted.h1List[0]) || '';
+      crawlResult.url = response.url || url;
+
+      // Classify and check discovered links
+      const internalLinks = [];
+      const externalLinks = [];
+      let customLinks = 0;
+
+      for (const link of crawlResult.links) {
+        if (link.isInsideCustom) customLinks++;
+        if (link.isInternal) {
+          internalLinks.push(link);
+          this.stats.internalLinksCount++;
+        } else {
+          externalLinks.push(link);
+          this.stats.externalLinksCount++;
+        }
+      }
+
+      crawlResult.internalLinksCount = internalLinks.length;
+      crawlResult.externalLinksCount = externalLinks.length;
+      crawlResult.customLinksCount = customLinks;
+      if (crawlResult.customContent?.detected) {
+        this.stats.customDetectedCount++;
+      }
+
+      // Add internal links to queue if depth permits
+      if (depth < this.maxDepth && this.crawlScope !== 'single-url') {
+        for (const link of internalLinks) {
+          if (!link.isNofollow && link.isValidHttp) {
+            this.addToQueue(link.url, depth + 1, crawlResult.url);
+          }
+        }
+      }
+    } catch (err) {
+      crawlResult.error = err.message;
+      this.stats.errorsCount++;
+    }
+
+    this.results.push(crawlResult);
+    this.stats.pagesCrawled++;
+    this.stats.pagesQueued = this.queue.length;
+
+    this.emit('pageCrawled', {
+      result: crawlResult,
+      stats: { ...this.stats },
+      queueLength: this.queue.length
+    });
   }
 
   async processPage(item, workerId) {
