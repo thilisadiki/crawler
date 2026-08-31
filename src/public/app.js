@@ -130,69 +130,129 @@ crawlScopeSelect.addEventListener('change', () => {
   }
 });
 
-// SSE Connection
+// SSE Connection & Polling Fallback
+let statusPollingInterval = null;
+
 function initEventSource() {
-  const evtSource = new EventSource('/api/crawler/stream');
+  try {
+    const evtSource = new EventSource('/api/crawler/stream');
 
-  evtSource.addEventListener('started', () => {
-    crawlResults = [];
-    allDiscoveredLinks = [];
-    renderCurrentViews();
-    updateUIStatus('running');
-    startTimer();
-  });
-
-  evtSource.addEventListener('pageCrawled', (e) => {
-    const data = JSON.parse(e.data);
-    crawlResults.push(data.result);
-
-    // Aggregate discovered links
-    if (data.result.links && data.result.links.length > 0) {
-      for (const l of data.result.links) {
-        allDiscoveredLinks.push({
-          ...l,
-          sourceUrl: data.result.url
-        });
-      }
-    }
-
-    updateStats(data.stats, data.queueLength);
-    renderCurrentViews();
-  });
-
-  evtSource.addEventListener('paused', () => {
-    updateUIStatus('paused');
-    stopTimer();
-  });
-
-  evtSource.addEventListener('resumed', () => {
-    updateUIStatus('running');
-    startTimer();
-  });
-
-  evtSource.addEventListener('stopped', () => {
-    updateUIStatus('completed');
-    stopTimer();
-  });
-
-  evtSource.addEventListener('completed', (e) => {
-    const data = JSON.parse(e.data);
-    updateStats(data.stats, 0);
-    updateUIStatus('completed');
-    stopTimer();
-
-    // In single-url mode, automatically make sure links and content views are populated
-    if (crawlScopeSelect.value === 'single-url' && crawlResults.length === 1) {
+    evtSource.addEventListener('started', () => {
+      crawlResults = [];
+      allDiscoveredLinks = [];
       renderCurrentViews();
-    }
-  });
+      updateUIStatus('running');
+      startTimer();
+      startPolling();
+    });
 
-  evtSource.addEventListener('error', (e) => {
-    try {
+    evtSource.addEventListener('pageCrawled', (e) => {
       const data = JSON.parse(e.data);
-      console.warn('System notice:', data.message);
-    } catch(err) {}
-  });
+      if (!crawlResults.some(r => r.url === data.result.url)) {
+        crawlResults.push(data.result);
+      }
+
+      // Aggregate discovered links
+      if (data.result.links && data.result.links.length > 0) {
+        for (const l of data.result.links) {
+          allDiscoveredLinks.push({
+            ...l,
+            sourceUrl: data.result.url
+          });
+        }
+      }
+
+      updateStats(data.stats, data.queueLength);
+      renderCurrentViews();
+    });
+
+    evtSource.addEventListener('paused', () => {
+      updateUIStatus('paused');
+      stopTimer();
+    });
+
+    evtSource.addEventListener('resumed', () => {
+      updateUIStatus('running');
+      startTimer();
+      startPolling();
+    });
+
+    evtSource.addEventListener('stopped', () => {
+      updateUIStatus('completed');
+      stopTimer();
+      stopPolling();
+    });
+
+    evtSource.addEventListener('completed', (e) => {
+      const data = JSON.parse(e.data);
+      updateStats(data.stats, 0);
+      updateUIStatus('completed');
+      stopTimer();
+      stopPolling();
+      renderCurrentViews();
+    });
+
+    evtSource.addEventListener('error', (e) => {
+      // SSE reconnecting or buffered by cloud proxy; polling fallback handles this
+      startPolling();
+    });
+  } catch (err) {
+    console.warn('SSE not supported or blocked, relying on polling fallback:', err);
+    startPolling();
+  }
+}
+
+// Background Polling Fallback (ensures cloud proxies/Nginx never stall the UI)
+function startPolling() {
+  if (statusPollingInterval) return;
+  statusPollingInterval = setInterval(async () => {
+    try {
+      const statusRes = await fetch('/api/crawler/status');
+      if (!statusRes.ok) return;
+      const statusData = await statusRes.json();
+
+      if (statusData.stats) {
+        updateStats(statusData.stats, statusData.queueLength);
+      }
+
+      if (statusData.isRunning) {
+        updateUIStatus('running');
+        startTimer();
+        
+        // Fetch incremental results
+        const resList = await fetch('/api/crawler/results');
+        if (resList.ok) {
+          const { results } = await resList.json();
+          if (results && results.length > crawlResults.length) {
+            crawlResults = results;
+            
+            // Re-aggregate links
+            allDiscoveredLinks = [];
+            crawlResults.forEach(r => {
+              if (r.links) {
+                r.links.forEach(l => {
+                  allDiscoveredLinks.push({ ...l, sourceUrl: r.url });
+                });
+              }
+            });
+            renderCurrentViews();
+          }
+        }
+      } else if (!statusData.isRunning && crawlResults.length > 0 && statusBadge.classList.contains('running')) {
+        updateUIStatus('completed');
+        stopTimer();
+        stopPolling();
+        renderCurrentViews();
+      }
+    } catch (e) {}
+  }, 1500);
+}
+
+function stopPolling() {
+  if (statusPollingInterval) {
+    clearInterval(statusPollingInterval);
+    statusPollingInterval = null;
+  }
 }
 
 function updateUIStatus(state) {

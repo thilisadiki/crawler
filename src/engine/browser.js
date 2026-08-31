@@ -21,6 +21,7 @@ export class BrowserManager {
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
+          '--no-zygote',
           '--disable-web-security',
           '--disable-features=IsolateOrigins,site-per-process'
         ]
@@ -32,7 +33,14 @@ export class BrowserManager {
         };
       }
 
-      this.browser = await chromium.launch(launchOptions);
+      try {
+        this.browser = await chromium.launch(launchOptions);
+      } catch (err) {
+        console.warn('Initial Chromium launch failed, attempting fallback launch with --single-process:', err.message);
+        // Fallback for strict cloud linux containers
+        launchOptions.args.push('--single-process');
+        this.browser = await chromium.launch(launchOptions);
+      }
     }
     return this.browser;
   }

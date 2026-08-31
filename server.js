@@ -28,8 +28,10 @@ function broadcastSSE(eventType, data) {
 // SSE Stream for real-time crawler updates
 app.get('/api/crawler/stream', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Disables Nginx buffering on Hostinger / Cloud
+  res.setHeader('Access-Control-Allow-Origin', '*');
   res.flushHeaders();
 
   const clientId = Date.now();
