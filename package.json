@@ -1,0 +1,15 @@
+{
+  "name": "browser-seo-crawler",
+  "version": "1.0.0",
+  "description": "Headless Chromium browser-based crawler for dynamic JS and Kentico SEO content",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "playwright": "^1.49.1"
+  }
+}

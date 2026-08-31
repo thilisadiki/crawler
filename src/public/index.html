@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniCrawl Enterprise | Browser SEO Spider</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="nav-left">
+        <div class="brand-logo">
+          <svg class="brand-svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">OmniCrawl</span>
+          <span class="brand-edition">Enterprise SEO Spider</span>
+        </div>
+        <div class="nav-divider"></div>
+        <div class="engine-badge">
+          <span class="pulse-dot"></span>
+          <span>Chromium Engine Active</span>
+        </div>
+      </div>
+
+      <div class="nav-right">
+        <div id="statusBadge" class="status-pill idle">
+          <span class="status-indicator"></span>
+          <span id="statusText">System Ready</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="main-container">
+      <!-- Target Configuration Panel -->
+      <section class="panel config-panel">
+        <div class="panel-header">
+          <div class="panel-header-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 4.24 4.24"/><path d="m14.83 9.17 4.24-4.24"/><path d="m14.83 14.83 4.24 4.24"/><path d="m9.17 14.83-4.24 4.24"/></svg>
+            <h3>Crawl Target & Scope Configuration</h3>
+          </div>
+          <button type="button" id="toggleAdvancedBtn" class="btn-text">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="3"/></svg>
+            Advanced Directives & Exclusions
+          </button>
+        </div>
+
+        <form id="crawlForm" class="form-layout">
+          <div class="form-row-main">
+            <div class="field-group flex-3">
+              <label for="seedUrl">Target URL Endpoint <span class="req">*</span></label>
+              <div class="input-prefix-wrapper">
+                <span class="input-prefix">https://</span>
+                <input type="url" id="seedUrl" class="text-input" placeholder="www.example.com/section/" required value="https://www.betway.co.za">
+              </div>
+            </div>
+
+            <div class="field-group flex-2">
+              <label for="crawlScope">Crawl Scope Boundary</label>
+              <select id="crawlScope" class="select-input">
+                <option value="domain">Exact Hostname Only (www.domain.com)</option>
+                <option value="subpath">Subfolder / Path Only (/sports/*)</option>
+                <option value="single-url" selected>Single URL Audit (Audit & Extract All On-Page Links/Content)</option>
+                <option value="subdomains">Domain & All Subdomains (*.domain.com)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Parameter Grid -->
+          <div class="form-row-grid">
+            <div class="field-group">
+              <label for="maxPages">Page Limit</label>
+              <input type="number" id="maxPages" class="text-input" min="1" max="10000" value="1" disabled>
+            </div>
+            <div class="field-group">
+              <label for="maxDepth">Max Crawl Depth</label>
+              <input type="number" id="maxDepth" class="text-input" min="0" max="20" value="0" disabled>
+            </div>
+            <div class="field-group">
+              <label for="concurrency">Worker Threads</label>
+              <input type="number" id="concurrency" class="text-input" min="1" max="5" value="2">
+            </div>
+            <div class="field-group">
+              <label for="delay">Rate Limiter (ms)</label>
+              <input type="number" id="delay" class="text-input" min="0" max="5000" step="50" value="500">
+            </div>
+            <div class="field-group toggle-group">
+              <label class="custom-toggle">
+                <input type="checkbox" id="autoScroll" checked>
+                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                <span class="toggle-text">Dynamic Auto-Scroll</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Advanced Collapsible Drawer -->
+          <div id="advancedSettings" class="advanced-drawer hidden">
+            <!-- Geo & Regional Domain Handling -->
+            <div class="drawer-grid">
+              <div class="field-group">
+                <label for="regionSelect">Regional Domain & Geo-Location Spoofing</label>
+                <select id="regionSelect" class="select-input">
+                  <option value="auto" selected>Auto-Detect from Domain TLD (.gh, .za, .ke, .ng, etc.)</option>
+                  <option value="GH">🇬🇭 Ghana (GH) - Accra (154.160.0.1)</option>
+                  <option value="ZA">🇿🇦 South Africa (ZA) - Johannesburg (196.25.1.1)</option>
+                  <option value="KE">🇰🇪 Kenya (KE) - Nairobi (197.232.0.1)</option>
+                  <option value="NG">🇳🇬 Nigeria (NG) - Lagos (197.210.0.1)</option>
+                  <option value="TZ">🇹🇿 Tanzania (TZ) - Dar es Salaam (196.43.224.1)</option>
+                  <option value="ZM">🇿🇲 Zambia (ZM) - Lusaka (41.77.0.1)</option>
+                  <option value="UG">🇺🇬 Uganda (UG) - Kampala (197.239.0.1)</option>
+                  <option value="MZ">🇲🇿 Mozambique (MZ) - Maputo (196.28.224.1)</option>
+                  <option value="MW">🇲🇼 Malawi (MW) - Blantyre (197.218.0.1)</option>
+                  <option value="GB">🇬🇧 United Kingdom (GB) - London (81.2.69.142)</option>
+                  <option value="US">🇺🇸 United States (US) - New York (208.67.222.222)</option>
+                </select>
+              </div>
+
+              <div class="field-group">
+                <label for="proxyInput">Proxy Server Endpoint <span class="help-text">(Optional, e.g. http://user:pass@host:port)</span></label>
+                <input type="text" id="proxyInput" class="text-input" placeholder="http://user:password@host:port or socks5://...">
+              </div>
+            </div>
+
+            <div class="drawer-grid">
+              <div class="field-group">
+                <label for="excludePatterns">Disallow Path Regex / Substrings <span class="help-text">(One per line)</span></label>
+                <textarea id="excludePatterns" class="textarea-input" rows="3" placeholder="/checkout&#10;/account&#10;\?sort=&#10;.*\.pdf$"></textarea>
+              </div>
+              <div class="field-group">
+                <label for="includePatterns">Allow Only Path Regex <span class="help-text">(Leave blank for all)</span></label>
+                <textarea id="includePatterns" class="textarea-input" rows="3" placeholder="/sports/&#10;/casino/"></textarea>
+              </div>
+            </div>
+
+            <div class="drawer-bottom-row">
+              <div class="field-group flex-2">
+                <label for="customContentSelector">Custom Element / Content Selector <span class="help-text">(Optional CSS Selector e.g. .page-text, .seo-content)</span></label>
+                <input type="text" id="customContentSelector" class="text-input" placeholder="Auto-detects .page-text, .seo-content or enter custom selector">
+              </div>
+              <div class="field-group toggle-group flex-1">
+                <label class="custom-toggle">
+                  <input type="checkbox" id="blockCrossDomainRedirects" checked>
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  <span class="toggle-text">Lock Target Domain (Block Geo Redirects)</span>
+                </label>
+              </div>
+              <div class="field-group toggle-group flex-1">
+                <label class="custom-toggle">
+                  <input type="checkbox" id="respectRobotsTxt">
+                  <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                  <span class="toggle-text">Enforce robots.txt</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Action Bar -->
+          <div class="action-bar">
+            <div class="action-buttons-group">
+              <button type="submit" id="startBtn" class="btn btn-primary">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Execute Crawl
+              </button>
+              <button type="button" id="pauseBtn" class="btn btn-secondary" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                Pause
+              </button>
+              <button type="button" id="stopBtn" class="btn btn-danger" disabled>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>
+                Abort
+              </button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <!-- KPI Executive Metrics Grid -->
+      <section class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Pages Audited</span>
+            <span class="kpi-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </span>
+          </div>
+          <div class="kpi-number" id="statCrawled">0</div>
+          <div class="kpi-footer">
+            <span class="kpi-subtext" id="statProgress">0% of target limit</span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Pending Queue</span>
+            <span class="kpi-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </span>
+          </div>
+          <div class="kpi-number" id="statQueued">0</div>
+          <div class="kpi-footer">
+            <span class="kpi-subtext" id="statSpeed">0.0 req/sec</span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Discovered Links</span>
+            <span class="kpi-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            </span>
+          </div>
+          <div class="kpi-number" id="statInternalLinks">0</div>
+          <div class="kpi-footer">
+            <span class="kpi-subtext"><strong id="statExternalLinks">0</strong> external outlinks</span>
+          </div>
+        </div>
+
+        <div class="kpi-card highlight-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Content Area Coverage</span>
+            <span class="kpi-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            </span>
+          </div>
+          <div class="kpi-number" id="statCustomPercent">0%</div>
+          <div class="kpi-footer">
+            <span class="kpi-subtext"><strong id="statCustomCount">0</strong> pages verified</span>
+          </div>
+        </div>
+
+        <div class="kpi-card">
+          <div class="kpi-top">
+            <span class="kpi-label">Errors & Exclusions</span>
+            <span class="kpi-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </span>
+          </div>
+          <div class="kpi-number" id="statErrors">0</div>
+          <div class="kpi-footer">
+            <span class="kpi-subtext">Elapsed: <strong id="statElapsedTime">00:00</strong></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Data Explorer Section with Multi-View Tabs -->
+      <section class="panel data-panel">
+        <div class="panel-header flex-between">
+          <div class="view-mode-tabs">
+            <button type="button" class="view-tab-btn active" data-view="pages-view">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+              Audited Pages (<span id="viewCountPages">0</span>)
+            </button>
+            <button type="button" class="view-tab-btn" data-view="links-view">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              Discovered Links & Anchors (<span id="viewCountLinks">0</span>)
+            </button>
+            <button type="button" class="view-tab-btn" data-view="content-view">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              Extracted Content Area Text
+            </button>
+          </div>
+
+          <div class="export-actions">
+            <a id="exportPagesBtn" href="/api/export/pages.csv" class="btn btn-sm btn-outline" download>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Pages CSV
+            </a>
+            <a id="exportLinksBtn" href="/api/export/links.csv" class="btn btn-sm btn-outline" download>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              All Links CSV
+            </a>
+            <a id="exportCustomBtn" href="/api/export/custom-content.csv" class="btn btn-sm btn-accent" download>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Content Area Report
+            </a>
+          </div>
+        </div>
+
+        <!-- Filter Toolbar -->
+        <div class="filter-toolbar">
+          <div class="search-input-container">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="tableSearch" class="search-input" placeholder="Search URLs, anchor texts, titles, or status codes...">
+          </div>
+          <div class="filter-tabs" id="pageFilterTabs">
+            <button class="tab-pill active" data-filter="all">All (<span id="filterCountAll">0</span>)</button>
+            <button class="tab-pill" data-filter="200">200 OK (<span id="filterCount200">0</span>)</button>
+            <button class="tab-pill" data-filter="custom">Content Area Found (<span id="filterCountCustom">0</span>)</button>
+            <button class="tab-pill" data-filter="missing-custom">Content Area Missing (<span id="filterCountMissingCustom">0</span>)</button>
+            <button class="tab-pill" data-filter="error">Errors & Blocked (<span id="filterCountError">0</span>)</button>
+          </div>
+        </div>
+
+        <!-- VIEW 1: Pages Table View -->
+        <div id="pages-view" class="view-container active">
+          <div class="table-container">
+            <table class="enterprise-table" id="crawlTable">
+              <thead>
+                <tr>
+                  <th class="sortable-th" data-sort="id" style="width: 50px;"># <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="statusCode" style="width: 85px;">Status <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="url">URI Address <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="title">Page Title <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="contentArea" style="width: 140px;">Content Area <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="internalLinks" style="width: 130px;">Internal Links <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="latency" style="width: 95px;">Latency <span class="sort-icon">↕</span></th>
+                  <th style="width: 80px; text-align: right;">Action</th>
+                </tr>
+              </thead>
+              <tbody id="crawlTableBody">
+                <tr class="empty-state-row">
+                  <td colspan="8">
+                    <div class="empty-state">
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      <p>No audit data loaded. Configure target above and click <strong>Execute Crawl</strong>.</p>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- VIEW 2: Discovered Links View (Direct Table of All Internal & External Links) -->
+        <div id="links-view" class="view-container">
+          <div class="sub-filter-toolbar">
+            <div class="filter-tabs" id="linkFilterTabs">
+              <button class="tab-pill active" data-linkfilter="all">All Links (<span id="filterLinksAll">0</span>)</button>
+              <button class="tab-pill" data-linkfilter="internal">Internal (<span id="filterLinksInternal">0</span>)</button>
+              <button class="tab-pill" data-linkfilter="external">External (<span id="filterLinksExternal">0</span>)</button>
+              <button class="tab-pill" data-linkfilter="in-content">In Content Area (<span id="filterLinksInContent">0</span>)</button>
+              <button class="tab-pill" data-linkfilter="200">200 OK (<span id="filterLinks200">0</span>)</button>
+              <button class="tab-pill" data-linkfilter="error">Errors & Broken (<span id="filterLinksError">0</span>)</button>
+              <button class="tab-pill" data-linkfilter="nofollow">Nofollow (<span id="filterLinksNofollow">0</span>)</button>
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="enterprise-table" id="allLinksTable">
+              <thead>
+                <tr>
+                  <th class="sortable-th" data-sort="id" style="width: 50px;"># <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="statusCode" style="width: 85px;">Status <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="anchorText">Anchor Text <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="url">Destination URL <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="linkType" style="width: 105px;">Link Type <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="isInsideCustom" style="width: 135px;">In Content Area <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="isNofollow" style="width: 95px;">Nofollow <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="sourceUrl">Source Page <span class="sort-icon">↕</span></th>
+                </tr>
+              </thead>
+              <tbody id="allLinksTableBody">
+                <tr class="empty-state-row">
+                  <td colspan="8">
+                    <div class="empty-state">
+                      <p>No links discovered yet. Run a crawl to extract on-page links.</p>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- VIEW 3: Page Content & SEO Text View -->
+        <div id="content-view" class="view-container">
+          <div class="content-explorer-layout" id="contentExplorerLayout">
+            <div class="empty-state" style="padding: 40px;">
+              <p>No content extracted yet. Run a crawl to view extracted SEO text blocks.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Inspection Modal Dialog -->
+    <div id="detailModal" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <div class="modal-dialog-header">
+          <div class="modal-title-meta">
+            <span id="modalStatusBadge" class="status-code-badge">200</span>
+            <span id="modalPageUrl" class="modal-url">https://www.example.com</span>
+          </div>
+          <button id="closeModalBtn" class="icon-close-btn" aria-label="Close modal">&times;</button>
+        </div>
+
+        <div class="modal-nav-tabs">
+          <button class="modal-tab active" data-tab="tab-overview">Overview & SEO Directives</button>
+          <button class="modal-tab" data-tab="tab-custom">Content Area <span id="modalCustomBadge"></span></button>
+          <button class="modal-tab" data-tab="tab-links">Discovered Links (<span id="modalLinksCount">0</span>)</button>
+        </div>
+
+        <div class="modal-dialog-body">
+          <!-- Overview Tab -->
+          <div id="tab-overview" class="modal-tab-pane active">
+            <div class="property-grid">
+              <div class="property-card">
+                <span class="property-label">Page Title (&lt;title&gt;)</span>
+                <span id="modalTitle" class="property-val">-</span>
+              </div>
+              <div class="property-card">
+                <span class="property-label">Meta Description</span>
+                <span id="modalDescription" class="property-val">-</span>
+              </div>
+              <div class="property-card">
+                <span class="property-label">Canonical URL</span>
+                <span id="modalCanonical" class="property-val mono">-</span>
+              </div>
+              <div class="property-card">
+                <span class="property-label">Meta Robots Directive</span>
+                <span id="modalRobots" class="property-val mono">-</span>
+              </div>
+              <div class="property-card">
+                <span class="property-label">H1 Heading(s)</span>
+                <span id="modalH1" class="property-val">-</span>
+              </div>
+              <div class="property-card">
+                <span class="property-label">H2 Sub-headings</span>
+                <span id="modalH2" class="property-val">-</span>
+              </div>
+              <div class="property-card">
+                <span class="property-label">Word & Asset Count</span>
+                <span id="modalWordCount" class="property-val">-</span>
+              </div>
+              <div class="property-card">
+                <span class="property-label">Response Time</span>
+                <span id="modalResponseTime" class="property-val mono">-</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Custom Content Tab -->
+          <div id="tab-custom" class="modal-tab-pane">
+            <div class="target-inspector-pane">
+              <div class="alert-banner" id="modalCustomBanner">Status</div>
+              <div class="property-card" style="margin-bottom: 12px;">
+                <span class="property-label">CSS Selector In Use</span>
+                <span id="modalCustomSelector" class="property-val mono">-</span>
+              </div>
+              <div class="property-card" style="margin-bottom: 12px;">
+                <span class="property-label">Extracted Sub-headings</span>
+                <span id="modalCustomHeadings" class="property-val">-</span>
+              </div>
+              <div class="property-card">
+                <span class="property-label">Extracted Content Preview</span>
+                <div id="modalCustomSnippet" class="code-editor-preview">-</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Links Tab -->
+          <div id="tab-links" class="modal-tab-pane">
+            <div class="links-toolbar">
+              <input type="text" id="modalLinksFilter" class="text-input" placeholder="Filter discovered links or anchor text...">
+            </div>
+            <div class="table-container modal-table-container">
+              <table class="enterprise-table links-table" id="modalLinksTable">
+                <thead>
+                  <tr>
+                    <th class="modal-sortable-th" data-sort="statusCode" style="width: 75px;">Status <span class="sort-icon">↕</span></th>
+                    <th class="modal-sortable-th" data-sort="anchorText">Anchor Text <span class="sort-icon">↕</span></th>
+                    <th class="modal-sortable-th" data-sort="url">Target URL <span class="sort-icon">↕</span></th>
+                    <th class="modal-sortable-th" data-sort="linkType" style="width: 95px;">Link Type <span class="sort-icon">↕</span></th>
+                    <th class="modal-sortable-th" data-sort="isInsideCustom" style="width: 130px;">In Content Area <span class="sort-icon">↕</span></th>
+                  </tr>
+                </thead>
+                <tbody id="modalLinksTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
