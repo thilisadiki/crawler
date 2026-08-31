@@ -67,6 +67,10 @@ export class SiteCrawler extends EventEmitter {
       targetHostname: this.baseHostname
     });
 
+    this.statusChecker = new LinkStatusChecker({
+      geo: this.geo
+    });
+
     // Crawl State
     this.isRunning = false;
     this.isPaused = false;
@@ -276,6 +280,11 @@ export class SiteCrawler extends EventEmitter {
       Object.assign(crawlResult, extracted);
       crawlResult.h1 = (extracted.h1List && extracted.h1List[0]) || '';
       crawlResult.url = response.url || url;
+
+      // Verify HTTP status codes in parallel
+      if (extracted.links && extracted.links.length > 0) {
+        await this.statusChecker.checkLinksInParallel(extracted.links, 12);
+      }
 
       // Classify and check discovered links
       const internalLinks = [];
