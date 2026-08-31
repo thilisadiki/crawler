@@ -164,6 +164,21 @@ app.get('/api/crawler/links', (req, res) => {
 });
 
 // Export Endpoints
+app.get(['/api/export/workbook.xlsx', '/api/export/excel'], async (req, res) => {
+  if (!activeCrawler || !activeCrawler.results.length) {
+    return res.status(400).send('No crawl data available to export.');
+  }
+  try {
+    const buffer = await Exporter.generateMultiSheetWorkbook(activeCrawler.results, activeCrawler.allLinks);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="OmniCrawl_MultiSheet_Report_${Date.now()}.xlsx"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('Error generating Excel workbook:', err);
+    res.status(500).send('Error generating Excel workbook: ' + err.message);
+  }
+});
+
 app.get('/api/export/pages.csv', (req, res) => {
   if (!activeCrawler || !activeCrawler.results.length) {
     return res.status(400).send('No crawl data available to export.');
