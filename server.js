@@ -149,6 +149,23 @@ app.post('/api/crawler/stop', (req, res) => {
   res.status(400).json({ error: 'No active crawl to stop.' });
 });
 
+// Clear / Reset Crawl State
+app.post('/api/crawler/reset', (req, res) => {
+  try {
+    if (activeCrawler) {
+      if (activeCrawler.isRunning) {
+        activeCrawler.stop();
+      }
+      activeCrawler = null;
+    }
+    broadcastSSE('reset', {});
+    return res.json({ success: true, message: 'Crawl state reset successfully' });
+  } catch (err) {
+    console.error('Failed to reset crawler:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Debug Diagnostic Endpoint
 app.get('/api/debug/browser', async (req, res) => {
   try {

@@ -39,6 +39,7 @@ const respectRobotsTxtInput = document.getElementById('respectRobotsTxt');
 const startBtn = document.getElementById('startBtn');
 const pauseBtn = document.getElementById('pauseBtn');
 const stopBtn = document.getElementById('stopBtn');
+const resetBtn = document.getElementById('resetBtn');
 
 // Status Elements
 const statusBadge = document.getElementById('statusBadge');
@@ -181,6 +182,27 @@ function initEventSource() {
       updateUIStatus('completed');
       stopTimer();
       stopPolling();
+    });
+
+    evtSource.addEventListener('reset', () => {
+      crawlResults = [];
+      allDiscoveredLinks = [];
+      searchQuery = '';
+      tableSearch.value = '';
+      stopTimer();
+      stopPolling();
+      statElapsedTime.textContent = '00:00';
+      startTime = null;
+      updateStats({
+        pagesCrawled: 0,
+        pagesQueued: 0,
+        internalLinksCount: 0,
+        externalLinksCount: 0,
+        errorsCount: 0,
+        customDetectedCount: 0
+      }, 0);
+      updateUIStatus('ready');
+      renderCurrentViews();
     });
 
     evtSource.addEventListener('completed', (e) => {
@@ -945,6 +967,43 @@ pauseBtn.addEventListener('click', async () => {
 
 stopBtn.addEventListener('click', async () => {
   await fetch('/api/crawler/stop', { method: 'POST' });
+});
+
+resetBtn.addEventListener('click', async () => {
+  try {
+    await fetch('/api/crawler/reset', { method: 'POST' });
+  } catch (e) {}
+
+  crawlResults = [];
+  allDiscoveredLinks = [];
+  searchQuery = '';
+  tableSearch.value = '';
+  activeFilter = 'all';
+
+  filterTabs.forEach(p => {
+    if (p.getAttribute('data-filter') === 'all') {
+      p.classList.add('active');
+    } else {
+      p.classList.remove('active');
+    }
+  });
+
+  stopTimer();
+  stopPolling();
+  statElapsedTime.textContent = '00:00';
+  startTime = null;
+
+  updateStats({
+    pagesCrawled: 0,
+    pagesQueued: 0,
+    internalLinksCount: 0,
+    externalLinksCount: 0,
+    errorsCount: 0,
+    customDetectedCount: 0
+  }, 0);
+
+  updateUIStatus('ready');
+  renderCurrentViews();
 });
 
 tableSearch.addEventListener('input', (e) => {
