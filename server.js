@@ -146,8 +146,12 @@ app.post('/api/crawler/stop', (req, res) => {
 app.get('/api/debug/browser', async (req, res) => {
   try {
     const { chromium } = await import('playwright');
-    console.log('Attempting debug chromium launch...');
-    const b = await chromium.launch({
+    const { findChromiumExecutable } = await import('./src/engine/browser.js');
+    
+    const detectedExe = findChromiumExecutable();
+    console.log('Attempting debug chromium launch with detected executable:', detectedExe);
+    
+    const launchOptions = {
       headless: true,
       args: [
         '--disable-blink-features=AutomationControlled',
@@ -158,10 +162,13 @@ app.get('/api/debug/browser', async (req, res) => {
         '--no-zygote',
         '--single-process'
       ]
-    });
+    };
+    if (detectedExe) launchOptions.executablePath = detectedExe;
+
+    const b = await chromium.launch(launchOptions);
     const v = b.version();
     await b.close();
-    res.json({ success: true, chromiumVersion: v, message: 'Chromium launched and closed successfully!' });
+    res.json({ success: true, chromiumVersion: v, detectedExecutable: detectedExe, message: 'Chromium launched and closed successfully!' });
   } catch (err) {
     console.error('Debug launch error:', err);
     res.status(500).json({

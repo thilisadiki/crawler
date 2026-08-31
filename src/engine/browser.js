@@ -1,5 +1,48 @@
 import { chromium } from 'playwright';
 import { execSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
+
+export function findChromiumExecutable() {
+  // 1. Try Playwright's default expected path
+  try {
+    const defaultPath = chromium.executablePath();
+    if (defaultPath && fs.existsSync(defaultPath)) {
+      return defaultPath;
+    }
+  } catch (e) {}
+
+  // 2. Search potential cache folders in Hostinger / Linux
+  const candidateDirs = [
+    '/home/u178924454/.cache/ms-playwright',
+    path.join(process.env.HOME || '', '.cache/ms-playwright'),
+    path.join(process.cwd(), 'node_modules/playwright-core/.local-browsers'),
+    '/tmp/.cache/ms-playwright'
+  ];
+
+  for (const baseDir of candidateDirs) {
+    if (fs.existsSync(baseDir)) {
+      try {
+        const entries = fs.readdirSync(baseDir, { recursive: true });
+        for (const entry of entries) {
+          const fullPath = path.join(baseDir, String(entry));
+          if (
+            (fullPath.endsWith('/chrome-linux64/chrome') || 
+             fullPath.endsWith('/chrome-headless-shell-linux64/chrome-headless-shell') || 
+             fullPath.endsWith('/chrome-linux/chrome') ||
+             fullPath.endsWith('/chrome.exe') ||
+             fullPath.endsWith('/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing')) &&
+            fs.existsSync(fullPath)
+          ) {
+            return fullPath;
+          }
+        }
+      } catch (err) {}
+    }
+  }
+
+  return null;
+}
 
 process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || '0';
 
@@ -31,6 +74,12 @@ export class BrowserManager {
         ]
       };
 
+      const detectedExe = findChromiumExecutable();
+      if (detectedExe) {
+        launchOptions.executablePath = detectedExe;
+        console.log('Using detected Chromium executable at:', detectedExe);
+      }
+
       if (this.proxy) {
         launchOptions.proxy = {
           server: this.proxy
@@ -44,6 +93,8 @@ export class BrowserManager {
           console.warn('Chromium executable missing. Running automatic runtime install...');
           try {
             execSync('npx playwright install chromium', { stdio: 'inherit', env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: '0' } });
+            const retryExe = findChromiumExecutable();
+            if (retryExe) launchOptions.executablePath = retryExe;
             this.browser = await chromium.launch(launchOptions);
           } catch (installErr) {
             console.error('Failed to auto-install Playwright Chromium:', installErr);
