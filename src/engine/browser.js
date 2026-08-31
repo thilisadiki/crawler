@@ -52,7 +52,18 @@ export function findChromiumExecutable() {
   return null;
 }
 
-process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || '0';
+export function ensureExecutablePermission(filePath) {
+  if (!filePath) return;
+  try {
+    if (fs.existsSync(filePath)) {
+      fs.chmodSync(filePath, 0o755);
+    }
+  } catch (e) {
+    try {
+      execSync(`chmod 755 "${filePath}"`);
+    } catch (err) {}
+  }
+}
 
 export class BrowserManager {
   constructor(options = {}) {
@@ -84,6 +95,7 @@ export class BrowserManager {
 
       const detectedExe = findChromiumExecutable();
       if (detectedExe) {
+        ensureExecutablePermission(detectedExe);
         launchOptions.executablePath = detectedExe;
         console.log('Using detected Chromium executable at:', detectedExe);
       }
@@ -102,6 +114,7 @@ export class BrowserManager {
           const sparticuzChromium = (await import('@sparticuz/chromium')).default;
           const sparticuzExe = await sparticuzChromium.executablePath();
           if (sparticuzExe) {
+            ensureExecutablePermission(sparticuzExe);
             console.log('Using standalone @sparticuz/chromium binary at:', sparticuzExe);
             const sparticuzLaunchOptions = {
               headless: true,
@@ -127,7 +140,10 @@ export class BrowserManager {
           try {
             execSync('npx playwright install chromium', { stdio: 'inherit', env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: '0' } });
             const retryExe = findChromiumExecutable();
-            if (retryExe) launchOptions.executablePath = retryExe;
+            if (retryExe) {
+              ensureExecutablePermission(retryExe);
+              launchOptions.executablePath = retryExe;
+            }
             this.browser = await chromium.launch(launchOptions);
           } catch (installErr) {
             console.error('Failed to auto-install Playwright Chromium:', installErr);
@@ -135,6 +151,7 @@ export class BrowserManager {
           }
         } else {
           console.warn('Attempting single-process fallback launch:', err.message);
+          if (launchOptions.executablePath) ensureExecutablePermission(launchOptions.executablePath);
           launchOptions.args.push('--single-process');
           this.browser = await chromium.launch(launchOptions);
         }
