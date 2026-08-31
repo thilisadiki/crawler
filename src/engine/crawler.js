@@ -79,6 +79,7 @@ export class SiteCrawler extends EventEmitter {
     this.visited = new Set();
     this.queued = new Set();
     this.results = [];
+    this.allLinks = [];
 
     // Crawl Statistics
     this.stats = {
@@ -293,6 +294,20 @@ export class SiteCrawler extends EventEmitter {
 
       for (const link of crawlResult.links) {
         if (link.isInsideCustom) customLinks++;
+
+        const linkRecord = {
+          sourceUrl: crawlResult.url,
+          targetUrl: link.url,
+          rawHref: link.rawHref,
+          anchorText: link.anchorText,
+          linkType: link.linkType,
+          rel: link.rel,
+          isNofollow: link.isNofollow,
+          isInsideCustom: link.isInsideCustom,
+          statusCode: link.statusCode || null
+        };
+        this.allLinks.push(linkRecord);
+
         if (link.isInternal) {
           internalLinks.push(link);
           this.stats.internalLinksCount++;
