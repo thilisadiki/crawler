@@ -140,6 +140,37 @@ app.post('/api/crawler/stop', (req, res) => {
   res.status(400).json({ error: 'No active crawl to stop.' });
 });
 
+// Debug Diagnostic Endpoint
+app.get('/api/debug/browser', async (req, res) => {
+  try {
+    const { chromium } = await import('playwright');
+    console.log('Attempting debug chromium launch...');
+    const b = await chromium.launch({
+      headless: true,
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process'
+      ]
+    });
+    const v = b.version();
+    await b.close();
+    res.json({ success: true, chromiumVersion: v, message: 'Chromium launched and closed successfully!' });
+  } catch (err) {
+    console.error('Debug launch error:', err);
+    res.status(500).json({
+      success: false,
+      errorName: err.name,
+      errorMessage: err.message,
+      stack: err.stack
+    });
+  }
+});
+
 // Status & Results
 app.get('/api/crawler/status', (req, res) => {
   if (!activeCrawler) {
@@ -149,6 +180,7 @@ app.get('/api/crawler/status', (req, res) => {
     isRunning: activeCrawler.isRunning,
     isPaused: activeCrawler.isPaused,
     stats: activeCrawler.stats,
+    lastError: activeCrawler.lastError || null,
     queueLength: activeCrawler.queue.length,
     resultsCount: activeCrawler.results.length,
     config: activeCrawler.getConfigSummary()

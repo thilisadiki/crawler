@@ -156,6 +156,9 @@ export class SiteCrawler extends EventEmitter {
       await this.browserManager.init();
       await this.runWorkerPool();
     } catch (err) {
+      console.error('Crawler execution error:', err);
+      this.lastError = err.message;
+      this.stats.errorsCount++;
       this.emit('error', { message: err.message });
     } finally {
       this.stats.endTime = Date.now();
