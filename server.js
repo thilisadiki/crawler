@@ -55,66 +55,73 @@ app.get('/api/crawler/stream', (req, res) => {
   });
 });
 
-// Start Crawl Endpoint
-app.post('/api/crawler/start', async (req, res) => {
-  if (activeCrawler && activeCrawler.isRunning) {
-    return res.status(400).json({ error: 'A crawl is already running. Please stop or wait for it to finish.' });
+// Start Crawl
+app.post('/api/crawler/start', (req, res) => {
+  try {
+    if (activeCrawler && activeCrawler.isRunning) {
+      return res.status(400).json({ error: 'A crawl is already running. Please stop or wait for it to finish.' });
+    }
+
+    const {
+      seedUrl,
+      crawlScope = 'domain',
+      maxDepth = 3,
+      maxPages = 50,
+      concurrency = 2,
+      customContentSelector = '',
+      excludePatterns = [],
+      includePatterns = [],
+      respectRobotsTxt = false,
+      autoScroll = true,
+      delayBetweenRequestsMs = 500,
+      region = 'auto',
+      proxy = '',
+      blockCrossDomainRedirects = true
+    } = req.body || {};
+
+    if (!seedUrl) {
+      return res.status(400).json({ error: 'Seed URL is required.' });
+    }
+
+    const cleanProxy = (proxy && typeof proxy === 'string') ? proxy.trim() || null : null;
+
+    activeCrawler = new SiteCrawler({
+      seedUrl,
+      crawlScope,
+      maxDepth,
+      maxPages,
+      concurrency,
+      customContentSelector,
+      excludePatterns,
+      includePatterns,
+      respectRobotsTxt,
+      autoScroll,
+      delayBetweenRequestsMs,
+      region,
+      proxy: cleanProxy,
+      blockCrossDomainRedirects
+    });
+
+    // Attach event handlers
+    activeCrawler.on('started', data => broadcastSSE('started', data));
+    activeCrawler.on('pageCrawled', data => broadcastSSE('pageCrawled', data));
+    activeCrawler.on('paused', () => broadcastSSE('paused', {}));
+    activeCrawler.on('resumed', () => broadcastSSE('resumed', {}));
+    activeCrawler.on('stopped', () => broadcastSSE('stopped', {}));
+    activeCrawler.on('completed', data => broadcastSSE('completed', data));
+    activeCrawler.on('error', data => broadcastSSE('error', data));
+
+    // Run in background
+    activeCrawler.start().catch(err => {
+      console.error('Crawler engine error:', err);
+      broadcastSSE('error', { message: err.message });
+    });
+
+    return res.json({ success: true, message: 'Crawl started', config: activeCrawler.getConfigSummary() });
+  } catch (err) {
+    console.error('Failed to start crawler:', err);
+    return res.status(500).json({ error: err.message });
   }
-
-  const {
-    seedUrl,
-    crawlScope = 'domain',
-    maxDepth = 3,
-    maxPages = 50,
-    concurrency = 2,
-    customContentSelector = '',
-    excludePatterns = [],
-    includePatterns = [],
-    respectRobotsTxt = false,
-    autoScroll = true,
-    delayBetweenRequestsMs = 500,
-    region = 'auto',
-    proxy = '',
-    blockCrossDomainRedirects = true
-  } = req.body;
-
-  if (!seedUrl) {
-    return res.status(400).json({ error: 'Seed URL is required.' });
-  }
-
-  activeCrawler = new SiteCrawler({
-    seedUrl,
-    crawlScope,
-    maxDepth,
-    maxPages,
-    concurrency,
-    customContentSelector,
-    excludePatterns,
-    includePatterns,
-    respectRobotsTxt,
-    autoScroll,
-    delayBetweenRequestsMs,
-    region,
-    proxy: proxy.trim() || null,
-    blockCrossDomainRedirects
-  });
-
-  // Attach event handlers
-  activeCrawler.on('started', data => broadcastSSE('started', data));
-  activeCrawler.on('pageCrawled', data => broadcastSSE('pageCrawled', data));
-  activeCrawler.on('paused', () => broadcastSSE('paused', {}));
-  activeCrawler.on('resumed', () => broadcastSSE('resumed', {}));
-  activeCrawler.on('stopped', () => broadcastSSE('stopped', {}));
-  activeCrawler.on('completed', data => broadcastSSE('completed', data));
-  activeCrawler.on('error', data => broadcastSSE('error', data));
-
-  // Run in background
-  activeCrawler.start().catch(err => {
-    console.error('Crawler engine error:', err);
-    broadcastSSE('error', { message: err.message });
-  });
-
-  return res.json({ success: true, message: 'Crawl started', config: activeCrawler.getConfigSummary() });
 });
 
 // Controls

@@ -915,7 +915,16 @@ crawlForm.addEventListener('submit', async (e) => {
       })
     });
 
-    const data = await res.json();
+    let data;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      if (!res.ok) {
+        throw new Error(`Server returned status ${res.status}. If the app was just deploying, please wait a few seconds and try again.`);
+      }
+      throw parseErr;
+    }
+
     if (data.error) {
       alert(data.error);
       updateUIStatus('ready');
