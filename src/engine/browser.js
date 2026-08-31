@@ -1,4 +1,7 @@
 import { chromium } from 'playwright';
+import { execSync } from 'child_process';
+
+process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || '0';
 
 export class BrowserManager {
   constructor(options = {}) {
@@ -22,6 +25,7 @@ export class BrowserManager {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--no-zygote',
+          '--single-process',
           '--disable-web-security',
           '--disable-features=IsolateOrigins,site-per-process'
         ]
@@ -36,10 +40,20 @@ export class BrowserManager {
       try {
         this.browser = await chromium.launch(launchOptions);
       } catch (err) {
-        console.warn('Initial Chromium launch failed, attempting fallback launch with --single-process:', err.message);
-        // Fallback for strict cloud linux containers
-        launchOptions.args.push('--single-process');
-        this.browser = await chromium.launch(launchOptions);
+        if (err.message.includes("Executable doesn't exist") || err.message.includes("playwright install")) {
+          console.warn('Chromium executable missing. Running automatic runtime install...');
+          try {
+            execSync('npx playwright install chromium', { stdio: 'inherit', env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: '0' } });
+            this.browser = await chromium.launch(launchOptions);
+          } catch (installErr) {
+            console.error('Failed to auto-install Playwright Chromium:', installErr);
+            throw installErr;
+          }
+        } else {
+          console.warn('Initial Chromium launch failed, attempting fallback launch with --single-process:', err.message);
+          launchOptions.args.push('--single-process');
+          this.browser = await chromium.launch(launchOptions);
+        }
       }
     }
     return this.browser;
