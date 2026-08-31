@@ -1,6 +1,6 @@
 /**
  * Regional Geolocation & IP presets for bypassing GeoIP redirects
- * Covers all African markets where Betway & major operators operate.
+ * Covers all African markets.
  */
 export const GEO_PRESETS = {
   // --- African Markets ---
