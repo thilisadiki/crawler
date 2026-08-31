@@ -52,7 +52,11 @@ export class SiteCrawler extends EventEmitter {
     }
 
     // Resolve Geo Settings
-    this.geo = this.resolveGeoSettings(this.seedUrl, this.region);
+    if (this.region && this.region !== 'auto' && GEO_PRESETS[this.region]) {
+      this.geo = GEO_PRESETS[this.region];
+    } else {
+      this.geo = detectRegionFromUrl(this.seedUrl);
+    }
 
     // Initialize Browser Manager
     this.browserManager = new BrowserManager({
