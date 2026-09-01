@@ -17,6 +17,7 @@ function boundedInteger(value, fallback, minimum, maximum) {
 
 const MAX_CONCURRENT_CRAWLS = boundedInteger(process.env.MAX_CONCURRENT_CRAWLS, 2, 1, 8);
 const MAX_WORKERS_PER_CRAWL = boundedInteger(process.env.MAX_WORKERS_PER_CRAWL, 1, 1, 3);
+const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v2';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'src', 'public')));
@@ -297,9 +298,10 @@ app.get('/api/debug/browser', async (req, res) => {
 app.get('/api/crawler/status', (req, res) => {
   const { crawler } = getSessionCrawler(req);
   if (!crawler) {
-    return res.json({ isRunning: false, stats: null, resultsCount: 0, engine: null, capacity: getCrawlCapacity() });
+    return res.json({ release: APP_RELEASE, isRunning: false, stats: null, resultsCount: 0, engine: null, capacity: getCrawlCapacity() });
   }
   res.json({
+    release: APP_RELEASE,
     isRunning: crawler.isRunning,
     isPaused: crawler.isPaused,
     stats: crawler.stats,
@@ -378,6 +380,7 @@ app.listen(PORT, () => {
   console.log(`\n======================================================`);
   console.log(`  🕷️ Browser SEO Spider is running!`);
   console.log(`  🔗 Open Dashboard: http://localhost:${PORT}`);
+  console.log(`  📦 Release: ${APP_RELEASE}`);
   console.log(`  ⚙️  Crawl Capacity: ${MAX_CONCURRENT_CRAWLS} simultaneous crawl(s), ${MAX_WORKERS_PER_CRAWL} worker(s) each`);
   console.log(`======================================================\n`);
 });
