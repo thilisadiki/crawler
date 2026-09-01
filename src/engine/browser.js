@@ -76,6 +76,9 @@ export function ensureExecutablePermission(filePath) {
 }
 
 export class BrowserManager {
+  static isSupported = null;
+  static unsupportedReason = null;
+
   constructor(options = {}) {
     this.browser = null;
     this.headless = options.headless !== undefined ? options.headless : true;
@@ -87,6 +90,10 @@ export class BrowserManager {
   }
 
   async init() {
+    if (BrowserManager.isSupported === false) {
+      throw new Error(BrowserManager.unsupportedReason || 'Chromium desktop libraries unavailable');
+    }
+
     if (!this.browser) {
       const launchOptions = {
         headless: this.headless,
@@ -118,7 +125,16 @@ export class BrowserManager {
 
       try {
         this.browser = await chromium.launch(launchOptions);
+        BrowserManager.isSupported = true;
       } catch (err) {
+        // If missing desktop shared libraries (libatk-bridge / GTK), cloud containers cannot run GUI Chromium
+        if (err.message.includes('libatk-bridge') || err.message.includes('cannot open shared object file') || err.message.includes('ESRCH')) {
+          BrowserManager.isSupported = false;
+          BrowserManager.unsupportedReason = 'Hostinger container missing Linux desktop shared libraries (libatk-bridge / GTK)';
+          console.warn('Desktop GUI libraries missing in cloud container. Permanently selecting Fast Direct DOM Engine.');
+          throw new Error(BrowserManager.unsupportedReason);
+        }
+
         console.warn('Standard Chromium launch failed (' + err.message + '). Attempting bundled cloud binary fallback...');
         try {
           const sparticuzChromium = (await import('@sparticuz/chromium')).default;
@@ -139,6 +155,7 @@ export class BrowserManager {
             };
             if (this.proxy) sparticuzLaunchOptions.proxy = { server: this.proxy };
             this.browser = await chromium.launch(sparticuzLaunchOptions);
+            BrowserManager.isSupported = true;
             return this.browser;
           }
         } catch (sparticuzErr) {
@@ -155,7 +172,10 @@ export class BrowserManager {
               launchOptions.executablePath = retryExe;
             }
             this.browser = await chromium.launch(launchOptions);
+            BrowserManager.isSupported = true;
           } catch (installErr) {
+            BrowserManager.isSupported = false;
+            BrowserManager.unsupportedReason = 'Failed to auto-install Chromium';
             console.error('Failed to auto-install Playwright Chromium:', installErr);
             throw installErr;
           }
@@ -163,7 +183,14 @@ export class BrowserManager {
           console.warn('Attempting single-process fallback launch:', err.message);
           if (launchOptions.executablePath) ensureExecutablePermission(launchOptions.executablePath);
           launchOptions.args.push('--single-process');
-          this.browser = await chromium.launch(launchOptions);
+          try {
+            this.browser = await chromium.launch(launchOptions);
+            BrowserManager.isSupported = true;
+          } catch (fallbackErr) {
+            BrowserManager.isSupported = false;
+            BrowserManager.unsupportedReason = fallbackErr.message;
+            throw fallbackErr;
+          }
         }
       }
     }

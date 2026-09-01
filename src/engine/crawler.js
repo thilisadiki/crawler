@@ -308,7 +308,8 @@ export class SiteCrawler extends EventEmitter {
         };
         this.allLinks.push(linkRecord);
 
-        if (link.isInternal) {
+        const isInternal = link.linkType === 'Internal' || link.isInternal;
+        if (isInternal) {
           internalLinks.push(link);
           this.stats.internalLinksCount++;
         } else {
@@ -333,6 +334,8 @@ export class SiteCrawler extends EventEmitter {
         }
       }
     } catch (err) {
+      crawlResult.statusCode = crawlResult.statusCode === 200 ? 500 : (crawlResult.statusCode || 500);
+      crawlResult.statusText = err.name || 'Crawl Error';
       crawlResult.error = err.message;
       this.stats.errorsCount++;
     }
@@ -512,6 +515,25 @@ export class SiteCrawler extends EventEmitter {
       stats: { ...this.stats },
       queueLength: this.queue.length
     });
+  }
+
+  /**
+   * Add a candidate URL to the crawl queue if permitted by scope and depth
+   */
+  addToQueue(targetUrl, depth, sourceUrl) {
+    if (this.crawlScope === 'single-url' || depth > this.maxDepth) return false;
+    const normalized = Extractor.normalizeUrl(targetUrl, this.baseOrigin);
+    if (!normalized || !this.isUrlAllowedInScope(normalized)) return false;
+    if (this.visited.has(normalized) || this.queued.has(normalized)) return false;
+
+    this.queued.add(normalized);
+    this.queue.push({
+      url: normalized,
+      depth,
+      sourceUrl
+    });
+    this.stats.pagesQueued = this.queue.length;
+    return true;
   }
 
   /**

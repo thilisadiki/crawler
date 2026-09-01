@@ -280,6 +280,7 @@ export class Extractor {
         url: resolvedHref,
         anchorText,
         linkType,
+        isInternal: linkType === 'Internal',
         rel,
         target,
         isNofollow,
