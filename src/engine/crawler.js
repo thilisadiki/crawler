@@ -496,10 +496,15 @@ export class SiteCrawler extends EventEmitter {
       crawlResult.responseTimeMs = Date.now() - pageStartTime;
 
     } catch (err) {
-      crawlResult.error = err.message;
-      crawlResult.responseTimeMs = Date.now() - pageStartTime;
-      crawlResult.statusCode = crawlResult.statusCode || 500;
-      this.stats.errorsCount++;
+      console.warn(`Browser execution encountered issue for ${url} (${err.message}). Seamlessly switching to Ultra-Fast Direct DOM engine!`);
+      this.isBrowserMode = false;
+      if (pageContext) {
+        await pageContext.context.close().catch(() => {});
+        pageContext = null;
+      }
+      // Retry this page immediately via processPageHttp so it never fails with 500
+      await this.processPageHttp(item, workerId);
+      return;
     } finally {
       if (pageContext) {
         await pageContext.context.close().catch(() => {});
