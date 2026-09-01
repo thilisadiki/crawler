@@ -22,6 +22,8 @@ For an explicit setting, add this environment variable in hPanel:
 CHROMIUM_ENGINE=sparticuz-only
 MAX_CONCURRENT_CRAWLS=2
 MAX_WORKERS_PER_CRAWL=1
+LINK_CHECK_CONCURRENCY=6
+LINK_CHECK_DEADLINE_MS=30000
 ```
 
 `MAX_CONCURRENT_CRAWLS` controls how many isolated users may crawl simultaneously (allowed range
@@ -29,6 +31,10 @@ MAX_WORKERS_PER_CRAWL=1
 range 1–3). The application defaults to 2 simultaneous crawls with 1 worker each. Increase the
 crawl count before increasing workers, because every additional worker creates another rendered
 page and raises Chromium memory usage.
+
+The link-check settings prevent a slow or rate-limited target from occupying a crawl slot
+indefinitely. Keep the defaults when enabling simultaneous crawls; raising link concurrency can
+multiply outbound requests across all active users.
 
 Suggested starting points:
 

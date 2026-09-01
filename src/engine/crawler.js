@@ -20,6 +20,9 @@ export class SiteCrawler extends EventEmitter {
     this.delayBetweenRequestsMs = options.delayBetweenRequestsMs || 500;
     this.autoScroll = options.autoScroll !== false;
     this.waitForSelector = options.waitForSelector || '';
+    this.linkCheckConcurrency = Math.min(12, Math.max(1, Number.parseInt(options.linkCheckConcurrency, 10) || 6));
+    this.linkCheckDeadlineMs = Math.min(120000, Math.max(5000, Number.parseInt(options.linkCheckDeadlineMs, 10) || 30000));
+    this.contextCloseTimeoutMs = 5000;
     
     // Regional Geo & Proxy configuration
     this.region = options.region || 'auto';
@@ -304,7 +307,7 @@ export class SiteCrawler extends EventEmitter {
 
       // Verify HTTP status codes in parallel
       if (extracted.links && extracted.links.length > 0) {
-        await this.statusChecker.checkLinksInParallel(extracted.links, 12);
+        await this.checkLinkStatuses(extracted.links);
       }
 
       // Classify and check discovered links
@@ -458,13 +461,13 @@ export class SiteCrawler extends EventEmitter {
 
       // The page is no longer needed once its DOM has been extracted. Releasing it
       // before link checks keeps Chromium memory stable on constrained cloud hosts.
-      await pageContext.context.close().catch(() => {});
+      await this.closePageContext(pageContext);
       pageContext = null;
       page = null;
 
       // Verify HTTP status code for every internal and external link in parallel
       if (extracted.links && extracted.links.length > 0) {
-        await this.statusChecker.checkLinksInParallel(extracted.links, 12);
+        await this.checkLinkStatuses(extracted.links);
       }
 
       crawlResult.title = extracted.title;
@@ -535,7 +538,7 @@ export class SiteCrawler extends EventEmitter {
 
     } catch (err) {
       if (pageContext) {
-        await pageContext.context.close().catch(() => {});
+        await this.closePageContext(pageContext);
         pageContext = null;
       }
 
@@ -574,7 +577,7 @@ export class SiteCrawler extends EventEmitter {
       return;
     } finally {
       if (pageContext) {
-        await pageContext.context.close().catch(() => {});
+        await this.closePageContext(pageContext);
       }
     }
 
@@ -592,6 +595,32 @@ export class SiteCrawler extends EventEmitter {
   isBrowserDisconnectError(error) {
     const message = error?.message || String(error || '');
     return /target (?:page, )?context or browser has been closed|browser has been closed|browser closed|browser.*disconnected|page crashed|target closed/i.test(message);
+  }
+
+  async checkLinkStatuses(links) {
+    let timeoutId = null;
+    const completed = await Promise.race([
+      this.statusChecker.checkLinksInParallel(links, this.linkCheckConcurrency, this.linkCheckDeadlineMs).then(() => true),
+      new Promise(resolve => {
+        timeoutId = setTimeout(() => resolve(false), this.linkCheckDeadlineMs);
+      })
+    ]);
+    if (timeoutId) clearTimeout(timeoutId);
+    if (!completed) {
+      console.warn(`Link verification reached its ${this.linkCheckDeadlineMs}ms page deadline; continuing the crawl.`);
+    }
+  }
+
+  async closePageContext(pageContext) {
+    if (!pageContext?.context) return;
+    let timeoutId = null;
+    await Promise.race([
+      pageContext.context.close().catch(() => {}),
+      new Promise(resolve => {
+        timeoutId = setTimeout(resolve, this.contextCloseTimeoutMs);
+      })
+    ]);
+    if (timeoutId) clearTimeout(timeoutId);
   }
 
   /**

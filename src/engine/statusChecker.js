@@ -106,12 +106,14 @@ export class LinkStatusChecker {
   /**
    * Check an array of link objects in parallel with concurrency limiting
    */
-  async checkLinksInParallel(links, maxConcurrency = 10) {
+  async checkLinksInParallel(links, maxConcurrency = 10, deadlineMs = 0) {
     const queue = [...links];
     const workers = [];
+    const deadlineAt = deadlineMs > 0 ? Date.now() + deadlineMs : 0;
 
     const worker = async () => {
       while (queue.length > 0) {
+        if (deadlineAt && Date.now() >= deadlineAt) break;
         const link = queue.shift();
         if (!link || link.statusCode !== undefined) continue;
 

@@ -17,7 +17,9 @@ function boundedInteger(value, fallback, minimum, maximum) {
 
 const MAX_CONCURRENT_CRAWLS = boundedInteger(process.env.MAX_CONCURRENT_CRAWLS, 2, 1, 8);
 const MAX_WORKERS_PER_CRAWL = boundedInteger(process.env.MAX_WORKERS_PER_CRAWL, 1, 1, 3);
-const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v2';
+const LINK_CHECK_CONCURRENCY = boundedInteger(process.env.LINK_CHECK_CONCURRENCY, 6, 1, 12);
+const LINK_CHECK_DEADLINE_MS = boundedInteger(process.env.LINK_CHECK_DEADLINE_MS, 30000, 5000, 120000);
+const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v3';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'src', 'public')));
@@ -66,7 +68,9 @@ function getCrawlCapacity() {
     activeCrawls,
     maxConcurrentCrawls: MAX_CONCURRENT_CRAWLS,
     availableSlots: Math.max(0, MAX_CONCURRENT_CRAWLS - activeCrawls),
-    maxWorkersPerCrawl: MAX_WORKERS_PER_CRAWL
+    maxWorkersPerCrawl: MAX_WORKERS_PER_CRAWL,
+    linkCheckConcurrency: LINK_CHECK_CONCURRENCY,
+    linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
   };
 }
 
@@ -178,7 +182,9 @@ app.post('/api/crawler/start', (req, res) => {
       delayBetweenRequestsMs,
       region,
       proxy: cleanProxy,
-      blockCrossDomainRedirects
+      blockCrossDomainRedirects,
+      linkCheckConcurrency: LINK_CHECK_CONCURRENCY,
+      linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
     });
     crawlerSessions.set(sessionId, { crawler, updatedAt: Date.now() });
     runningCrawlers.add(crawler);
