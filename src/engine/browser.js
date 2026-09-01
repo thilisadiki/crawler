@@ -2,6 +2,8 @@ import { chromium } from 'playwright-core';
 import fs from 'fs';
 import path from 'path';
 
+let sparticuzRuntimePromise = null;
+
 const localTmpDir = path.join(process.cwd(), '.tmp');
 try {
   if (!fs.existsSync(localTmpDir)) {
@@ -67,6 +69,25 @@ export function ensureExecutablePermission(filePath) {
       fs.chmodSync(filePath, 0o755);
     }
   } catch (e) {}
+}
+
+async function getSparticuzRuntime() {
+  if (!sparticuzRuntimePromise) {
+    sparticuzRuntimePromise = (async () => {
+      const sparticuzChromium = (await import('@sparticuz/chromium')).default;
+      sparticuzChromium.setGraphicsMode = false;
+      const executablePath = await sparticuzChromium.executablePath();
+      if (!executablePath) {
+        throw new Error('@sparticuz/chromium did not return an executable path');
+      }
+      ensureExecutablePermission(executablePath);
+      return { sparticuzChromium, executablePath };
+    })().catch(error => {
+      sparticuzRuntimePromise = null;
+      throw error;
+    });
+  }
+  return sparticuzRuntimePromise;
 }
 
 export class BrowserManager {
@@ -139,15 +160,10 @@ export class BrowserManager {
   }
 
   async launchSparticuz() {
-    const sparticuzChromium = (await import('@sparticuz/chromium')).default;
-    sparticuzChromium.setGraphicsMode = false;
-
-    const executablePath = await sparticuzChromium.executablePath();
-    if (!executablePath) {
-      throw new Error('@sparticuz/chromium did not return an executable path');
-    }
-
-    ensureExecutablePermission(executablePath);
+    // All crawler sessions share one extraction promise. Without this lock, two
+    // simultaneous cold starts can execute Chromium while the other call is still
+    // replacing the binary, which Linux rejects with ETXTBSY (text file busy).
+    const { sparticuzChromium, executablePath } = await getSparticuzRuntime();
     const useSingleProcess = process.env.CHROMIUM_SINGLE_PROCESS === 'true';
     const incompatibleHostingerArgs = new Set(['--single-process', '--no-zygote']);
     const serverlessArgs = sparticuzChromium.args.filter(arg => useSingleProcess || !incompatibleHostingerArgs.has(arg));
@@ -163,7 +179,19 @@ export class BrowserManager {
     if (this.proxy) launchOptions.proxy = { server: this.proxy };
 
     console.log('Launching Hostinger-compatible @sparticuz/chromium at:', executablePath);
-    const browser = await chromium.launch(launchOptions);
+    let browser = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        browser = await chromium.launch(launchOptions);
+        break;
+      } catch (error) {
+        const isExecutableBusy = /ETXTBSY|text file busy/i.test(error?.message || '');
+        if (!isExecutableBusy || attempt === 3) throw error;
+        const retryDelayMs = attempt * 300;
+        console.warn(`Chromium executable is temporarily busy; retrying launch in ${retryDelayMs}ms.`);
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      }
+    }
     this.provider = 'sparticuz';
     this.executablePath = executablePath;
     this.browserVersion = browser.version();
