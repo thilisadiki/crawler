@@ -1,6 +1,6 @@
 # OmniCrawl Enterprise Production Dockerfile
 # Uses official Microsoft Playwright image with all Chromium dependencies pre-installed
-FROM mcr.microsoft.com/playwright:v1.44.0-jammy
+FROM mcr.microsoft.com/playwright:v1.61.1-jammy
 
 # Set working directory
 WORKDIR /app
@@ -8,6 +8,7 @@ WORKDIR /app
 # Set environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV CHROMIUM_ENGINE=playwright
 
 # Install dependencies first for efficient caching
 COPY package*.json ./

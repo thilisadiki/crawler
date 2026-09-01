@@ -14,7 +14,8 @@ export class SiteCrawler extends EventEmitter {
     this.crawlScope = options.crawlScope || 'domain'; // 'single-url' | 'subpath' | 'domain' | 'subdomains'
     this.maxDepth = options.crawlScope === 'single-url' ? 0 : (options.maxDepth !== undefined ? parseInt(options.maxDepth, 10) : 3);
     this.maxPages = options.crawlScope === 'single-url' ? 1 : (options.maxPages !== undefined ? parseInt(options.maxPages, 10) : 50);
-    this.concurrency = options.concurrency !== undefined ? parseInt(options.concurrency, 10) : 2;
+    const requestedConcurrency = options.concurrency !== undefined ? parseInt(options.concurrency, 10) : 1;
+    this.concurrency = Number.isFinite(requestedConcurrency) ? Math.min(5, Math.max(1, requestedConcurrency)) : 1;
     this.pageTimeoutMs = options.pageTimeoutMs || 30000;
     this.delayBetweenRequestsMs = options.delayBetweenRequestsMs || 500;
     this.autoScroll = options.autoScroll !== false;
@@ -37,6 +38,9 @@ export class SiteCrawler extends EventEmitter {
     this.respectRobotsTxt = options.respectRobotsTxt === true;
     this.robotsParser = null;
     this.isBrowserMode = true;
+    this.engineMode = 'initializing';
+    this.engineProvider = null;
+    this.engineError = null;
 
     try {
       const parsedSeed = new URL(this.seedUrl);
@@ -157,9 +161,17 @@ export class SiteCrawler extends EventEmitter {
     try {
       await this.browserManager.init();
       this.isBrowserMode = true;
+      this.engineMode = 'browser';
+      this.engineProvider = this.browserManager.provider;
+      this.engineError = null;
+      this.emit('engineSelected', this.getEngineStatus());
     } catch (err) {
-      console.warn('Chromium initialization unavailable (' + err.message + '). Switching seamlessly to Ultra-Fast Direct DOM Engine!');
+      console.warn('Chromium initialization unavailable (' + err.message + '). Switching to the Direct DOM engine.');
       this.isBrowserMode = false;
+      this.engineMode = 'http';
+      this.engineProvider = 'direct-dom';
+      this.engineError = err.message;
+      this.emit('engineSelected', this.getEngineStatus());
     }
 
     try {
@@ -172,10 +184,13 @@ export class SiteCrawler extends EventEmitter {
     } finally {
       this.stats.endTime = Date.now();
       this.isRunning = false;
-      if (this.isBrowserMode) {
-        await this.browserManager.close().catch(() => {});
-      }
-      this.emit('completed', { stats: this.stats, resultsCount: this.results.length });
+      // Always close the browser, including when a page-level error changed the engine mode.
+      await this.browserManager.close().catch(() => {});
+      this.emit('completed', {
+        stats: this.stats,
+        resultsCount: this.results.length,
+        engine: this.getEngineStatus()
+      });
     }
   }
 
@@ -496,8 +511,12 @@ export class SiteCrawler extends EventEmitter {
       crawlResult.responseTimeMs = Date.now() - pageStartTime;
 
     } catch (err) {
-      console.warn(`Browser execution encountered issue for ${url} (${err.message}). Seamlessly switching to Ultra-Fast Direct DOM engine!`);
+      console.warn(`Browser execution encountered an issue for ${url} (${err.message}). Switching to the Direct DOM engine.`);
       this.isBrowserMode = false;
+      this.engineMode = 'http';
+      this.engineProvider = 'direct-dom';
+      this.engineError = err.message;
+      this.emit('engineSelected', this.getEngineStatus());
       if (pageContext) {
         await pageContext.context.close().catch(() => {});
         pageContext = null;
@@ -625,6 +644,14 @@ export class SiteCrawler extends EventEmitter {
       excludePatternsCount: this.excludePatterns.length,
       includePatternsCount: this.includePatterns.length,
       autoScroll: this.autoScroll
+    };
+  }
+
+  getEngineStatus() {
+    return {
+      mode: this.engineMode,
+      provider: this.engineProvider,
+      error: this.engineError
     };
   }
 }

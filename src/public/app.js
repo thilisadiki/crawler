@@ -9,6 +9,7 @@ let selectedResult = null;
 let timerInterval = null;
 let accumulatedElapsedMs = 0;
 let sessionStartTime = null;
+let activeEngine = null;
 
 // Sort States
 let pagesSort = { column: 'id', direction: 'asc' };
@@ -141,12 +142,18 @@ function initEventSource() {
     evtSource.addEventListener('started', () => {
       crawlResults = [];
       allDiscoveredLinks = [];
+      activeEngine = { mode: 'initializing', provider: null, error: null };
       accumulatedElapsedMs = 0;
       sessionStartTime = null;
       renderCurrentViews();
       updateUIStatus('running');
       startTimer();
       startPolling();
+    });
+
+    evtSource.addEventListener('engineSelected', (e) => {
+      activeEngine = JSON.parse(e.data);
+      if (statusBadge.classList.contains('running')) updateUIStatus('running');
     });
 
     evtSource.addEventListener('pageCrawled', (e) => {
@@ -189,6 +196,7 @@ function initEventSource() {
     evtSource.addEventListener('reset', () => {
       crawlResults = [];
       allDiscoveredLinks = [];
+      activeEngine = null;
       searchQuery = '';
       tableSearch.value = '';
       stopTimer(false);
@@ -209,6 +217,7 @@ function initEventSource() {
 
     evtSource.addEventListener('completed', (e) => {
       const data = JSON.parse(e.data);
+      activeEngine = data.engine || activeEngine;
       updateStats(data.stats, 0);
       updateUIStatus('completed');
       stopTimer(true);
@@ -234,6 +243,7 @@ function startPolling() {
       const statusRes = await fetch('/api/crawler/status');
       if (!statusRes.ok) return;
       const statusData = await statusRes.json();
+      activeEngine = statusData.engine || activeEngine;
 
       if (statusData.stats) {
         updateStats(statusData.stats, statusData.queueLength);
@@ -287,7 +297,13 @@ function stopPolling() {
 function updateUIStatus(state) {
   statusBadge.className = `status-pill ${state}`;
   if (state === 'running') {
-    statusText.textContent = 'Engine Active';
+    if (activeEngine?.mode === 'browser') {
+      statusText.textContent = activeEngine.provider === 'sparticuz' ? 'Cloud Browser Active' : 'Browser Engine Active';
+    } else if (activeEngine?.mode === 'http') {
+      statusText.textContent = 'Direct DOM Active';
+    } else {
+      statusText.textContent = 'Starting Engine';
+    }
     startBtn.disabled = true;
     pauseBtn.disabled = false;
     pauseBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
@@ -947,7 +963,7 @@ crawlForm.addEventListener('submit', async (e) => {
         respectRobotsTxt: respectRobotsTxtInput.checked,
         maxPages: parseInt(maxPagesInput.value, 10) || 50,
         maxDepth: parseInt(maxDepthInput.value, 10) || 3,
-        concurrency: parseInt(concurrencyInput.value, 10) || 2,
+        concurrency: parseInt(concurrencyInput.value, 10) || 1,
         delayBetweenRequestsMs: parseInt(delayInput.value, 10) || 500,
         autoScroll: autoScrollInput.checked,
         region: regionSelect ? regionSelect.value : 'auto',
@@ -1007,6 +1023,7 @@ resetBtn.addEventListener('click', async () => {
 
   crawlResults = [];
   allDiscoveredLinks = [];
+  activeEngine = null;
   searchQuery = '';
   tableSearch.value = '';
   activeFilter = 'all';

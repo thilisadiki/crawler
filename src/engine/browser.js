@@ -1,5 +1,4 @@
-import { chromium } from 'playwright';
-import { execSync } from 'child_process';
+import { chromium } from 'playwright-core';
 import fs from 'fs';
 import path from 'path';
 
@@ -15,7 +14,6 @@ try {
 
 export function findChromiumExecutable() {
   const candidateDirs = [
-    '/home/u178924454/.cache/ms-playwright',
     path.join(process.env.HOME || '', '.cache/ms-playwright'),
     path.join(process.cwd(), 'node_modules/playwright-core/.local-browsers'),
     '/tmp/.cache/ms-playwright'
@@ -68,19 +66,16 @@ export function ensureExecutablePermission(filePath) {
     if (fs.existsSync(filePath)) {
       fs.chmodSync(filePath, 0o755);
     }
-  } catch (e) {
-    try {
-      execSync(`chmod 755 "${filePath}"`);
-    } catch (err) {}
-  }
+  } catch (e) {}
 }
 
 export class BrowserManager {
-  static isSupported = null;
-  static unsupportedReason = null;
-
   constructor(options = {}) {
     this.browser = null;
+    this.provider = null;
+    this.executablePath = null;
+    this.browserVersion = null;
+    this.launchErrors = [];
     this.headless = options.headless !== undefined ? options.headless : true;
     this.userAgent = options.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
     this.proxy = options.proxy || null;
@@ -90,111 +85,116 @@ export class BrowserManager {
   }
 
   async init() {
-    if (BrowserManager.isSupported === false) {
-      throw new Error(BrowserManager.unsupportedReason || 'Chromium desktop libraries unavailable');
-    }
+    if (this.browser) return this.browser;
 
-    if (!this.browser) {
-      const launchOptions = {
-        headless: this.headless,
-        args: [
-          '--disable-blink-features=AutomationControlled',
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-zygote',
-          '--single-process',
-          '--disable-web-security',
-          '--disable-features=IsolateOrigins,site-per-process'
-        ]
-      };
+    this.launchErrors = [];
+    // Managed Linux hosts usually cannot install Playwright's OS packages. Prefer the
+    // self-contained serverless build on Linux unless the deployment overrides it.
+    const preferredEngine = process.env.CHROMIUM_ENGINE || (process.platform === 'linux' ? 'sparticuz' : 'playwright');
 
-      const detectedExe = findChromiumExecutable();
-      if (detectedExe) {
-        ensureExecutablePermission(detectedExe);
-        launchOptions.executablePath = detectedExe;
-        console.log('Using detected Chromium executable at:', detectedExe);
-      }
-
-      if (this.proxy) {
-        launchOptions.proxy = {
-          server: this.proxy
-        };
-      }
-
+    if (preferredEngine !== 'playwright') {
       try {
-        this.browser = await chromium.launch(launchOptions);
-        BrowserManager.isSupported = true;
+        this.browser = await this.launchSparticuz();
+        return this.browser;
       } catch (err) {
-        // If missing desktop shared libraries (libatk-bridge / GTK), cloud containers cannot run GUI Chromium
-        if (err.message.includes('libatk-bridge') || err.message.includes('cannot open shared object file') || err.message.includes('ESRCH')) {
-          BrowserManager.isSupported = false;
-          BrowserManager.unsupportedReason = 'Hostinger container missing Linux desktop shared libraries (libatk-bridge / GTK)';
-          console.warn('Desktop GUI libraries missing in cloud container. Permanently selecting Fast Direct DOM Engine.');
-          throw new Error(BrowserManager.unsupportedReason);
-        }
-
-        console.warn('Standard Chromium launch failed (' + err.message + '). Attempting bundled cloud binary fallback...');
-        try {
-          const sparticuzChromium = (await import('@sparticuz/chromium')).default;
-          const sparticuzExe = await sparticuzChromium.executablePath();
-          if (sparticuzExe) {
-            ensureExecutablePermission(sparticuzExe);
-            console.log('Using standalone @sparticuz/chromium binary at:', sparticuzExe);
-            const sparticuzLaunchOptions = {
-              headless: true,
-              executablePath: sparticuzExe,
-              args: [
-                ...sparticuzChromium.args,
-                '--disable-blink-features=AutomationControlled',
-                '--disable-web-security',
-                '--no-sandbox',
-                '--disable-setuid-sandbox'
-              ]
-            };
-            if (this.proxy) sparticuzLaunchOptions.proxy = { server: this.proxy };
-            this.browser = await chromium.launch(sparticuzLaunchOptions);
-            BrowserManager.isSupported = true;
-            return this.browser;
-          }
-        } catch (sparticuzErr) {
-          console.warn('@sparticuz/chromium fallback error:', sparticuzErr.message);
-        }
-
-        if (err.message.includes("Executable doesn't exist") || err.message.includes("playwright install")) {
-          console.warn('Chromium executable missing. Running automatic runtime install...');
-          try {
-            execSync('npx playwright install chromium', { stdio: 'inherit', env: { ...process.env, PLAYWRIGHT_BROWSERS_PATH: '0' } });
-            const retryExe = findChromiumExecutable();
-            if (retryExe) {
-              ensureExecutablePermission(retryExe);
-              launchOptions.executablePath = retryExe;
-            }
-            this.browser = await chromium.launch(launchOptions);
-            BrowserManager.isSupported = true;
-          } catch (installErr) {
-            BrowserManager.isSupported = false;
-            BrowserManager.unsupportedReason = 'Failed to auto-install Chromium';
-            console.error('Failed to auto-install Playwright Chromium:', installErr);
-            throw installErr;
-          }
-        } else {
-          console.warn('Attempting single-process fallback launch:', err.message);
-          if (launchOptions.executablePath) ensureExecutablePermission(launchOptions.executablePath);
-          launchOptions.args.push('--single-process');
-          try {
-            this.browser = await chromium.launch(launchOptions);
-            BrowserManager.isSupported = true;
-          } catch (fallbackErr) {
-            BrowserManager.isSupported = false;
-            BrowserManager.unsupportedReason = fallbackErr.message;
-            throw fallbackErr;
-          }
-        }
+        this.recordLaunchError('sparticuz', err);
       }
     }
-    return this.browser;
+
+    if (preferredEngine !== 'sparticuz-only') {
+      try {
+        this.browser = await this.launchPlaywright();
+        return this.browser;
+      } catch (err) {
+        this.recordLaunchError('playwright', err);
+      }
+    }
+
+    const details = this.launchErrors.map(item => `${item.provider}: ${item.message}`).join(' | ');
+    throw new Error(`No compatible Chromium engine could be launched. ${details}`);
+  }
+
+  async launchSparticuz() {
+    const sparticuzChromium = (await import('@sparticuz/chromium')).default;
+    sparticuzChromium.setGraphicsMode = false;
+
+    const executablePath = await sparticuzChromium.executablePath();
+    if (!executablePath) {
+      throw new Error('@sparticuz/chromium did not return an executable path');
+    }
+
+    ensureExecutablePermission(executablePath);
+    const launchOptions = {
+      headless: true,
+      executablePath,
+      args: [...new Set([
+        ...sparticuzChromium.args,
+        '--disable-blink-features=AutomationControlled',
+        '--disable-dev-shm-usage'
+      ])]
+    };
+    if (this.proxy) launchOptions.proxy = { server: this.proxy };
+
+    console.log('Launching Hostinger-compatible @sparticuz/chromium at:', executablePath);
+    const browser = await chromium.launch(launchOptions);
+    this.provider = 'sparticuz';
+    this.executablePath = executablePath;
+    this.browserVersion = browser.version();
+    console.log(`Chromium started successfully with @sparticuz/chromium (${this.browserVersion}).`);
+    return browser;
+  }
+
+  async launchPlaywright() {
+    const executablePath = findChromiumExecutable();
+    if (!executablePath) {
+      throw new Error('No local Playwright Chromium executable was found. Run "npx playwright install chromium" for local development.');
+    }
+
+    ensureExecutablePermission(executablePath);
+    const args = ['--disable-blink-features=AutomationControlled'];
+    if (process.platform === 'linux') {
+      args.push(
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process'
+      );
+    }
+
+    const launchOptions = {
+      headless: this.headless,
+      executablePath,
+      args
+    };
+    if (this.proxy) launchOptions.proxy = { server: this.proxy };
+
+    console.log('Launching local Playwright Chromium at:', executablePath);
+    const browser = await chromium.launch(launchOptions);
+    this.provider = 'playwright';
+    this.executablePath = executablePath;
+    this.browserVersion = browser.version();
+    console.log(`Chromium started successfully with Playwright (${this.browserVersion}).`);
+    return browser;
+  }
+
+  recordLaunchError(provider, error) {
+    const message = error instanceof Error ? error.message : String(error);
+    this.launchErrors.push({ provider, message });
+    console.error(`Chromium launch failed using ${provider}:`, message);
+  }
+
+  getDiagnostics() {
+    return {
+      available: Boolean(this.browser),
+      provider: this.provider,
+      executablePath: this.executablePath,
+      browserVersion: this.browserVersion,
+      launchErrors: [...this.launchErrors]
+    };
   }
 
   async createPageContext() {

@@ -1,5 +1,3 @@
-process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || '0';
-
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -67,7 +65,7 @@ app.post('/api/crawler/start', (req, res) => {
       crawlScope = 'domain',
       maxDepth = 3,
       maxPages = 50,
-      concurrency = 2,
+      concurrency = 1,
       customContentSelector = '',
       excludePatterns = [],
       includePatterns = [],
@@ -104,6 +102,7 @@ app.post('/api/crawler/start', (req, res) => {
 
     // Attach event handlers
     activeCrawler.on('started', data => broadcastSSE('started', data));
+    activeCrawler.on('engineSelected', data => broadcastSSE('engineSelected', data));
     activeCrawler.on('pageCrawled', data => broadcastSSE('pageCrawled', data));
     activeCrawler.on('paused', () => broadcastSSE('paused', {}));
     activeCrawler.on('resumed', () => broadcastSSE('resumed', {}));
@@ -168,46 +167,33 @@ app.post('/api/crawler/reset', (req, res) => {
 
 // Debug Diagnostic Endpoint
 app.get('/api/debug/browser', async (req, res) => {
+  let browserManager = null;
   try {
-    const { chromium } = await import('playwright');
-    const { findChromiumExecutable } = await import('./src/engine/browser.js');
-    
-    const detectedExe = findChromiumExecutable();
-    console.log('Attempting debug chromium launch with detected executable:', detectedExe);
-    
-    const launchOptions = {
-      headless: true,
-      args: [
-        '--disable-blink-features=AutomationControlled',
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--single-process'
-      ]
-    };
-    if (detectedExe) launchOptions.executablePath = detectedExe;
-
-    const b = await chromium.launch(launchOptions);
-    const v = b.version();
-    await b.close();
-    res.json({ success: true, chromiumVersion: v, detectedExecutable: detectedExe, message: 'Chromium launched and closed successfully!' });
+    const { BrowserManager } = await import('./src/engine/browser.js');
+    browserManager = new BrowserManager({ headless: true });
+    await browserManager.init();
+    res.json({
+      success: true,
+      ...browserManager.getDiagnostics(),
+      message: 'Chromium launched and closed successfully.'
+    });
   } catch (err) {
     console.error('Debug launch error:', err);
     res.status(500).json({
       success: false,
       errorName: err.name,
       errorMessage: err.message,
-      stack: err.stack
+      diagnostics: browserManager ? browserManager.getDiagnostics() : null
     });
+  } finally {
+    if (browserManager) await browserManager.close().catch(() => {});
   }
 });
 
 // Status & Results
 app.get('/api/crawler/status', (req, res) => {
   if (!activeCrawler) {
-    return res.json({ isRunning: false, stats: null, resultsCount: 0 });
+    return res.json({ isRunning: false, stats: null, resultsCount: 0, engine: null });
   }
   res.json({
     isRunning: activeCrawler.isRunning,
@@ -216,7 +202,8 @@ app.get('/api/crawler/status', (req, res) => {
     lastError: activeCrawler.lastError || null,
     queueLength: activeCrawler.queue.length,
     resultsCount: activeCrawler.results.length,
-    config: activeCrawler.getConfigSummary()
+    config: activeCrawler.getConfigSummary(),
+    engine: activeCrawler.getEngineStatus()
   });
 });
 
