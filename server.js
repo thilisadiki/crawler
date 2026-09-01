@@ -19,7 +19,7 @@ const MAX_CONCURRENT_CRAWLS = boundedInteger(process.env.MAX_CONCURRENT_CRAWLS, 
 const MAX_WORKERS_PER_CRAWL = boundedInteger(process.env.MAX_WORKERS_PER_CRAWL, 1, 1, 3);
 const LINK_CHECK_CONCURRENCY = boundedInteger(process.env.LINK_CHECK_CONCURRENCY, 6, 1, 12);
 const LINK_CHECK_DEADLINE_MS = boundedInteger(process.env.LINK_CHECK_DEADLINE_MS, 30000, 5000, 120000);
-const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v3';
+const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v4';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'src', 'public')));

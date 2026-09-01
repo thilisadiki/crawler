@@ -415,7 +415,7 @@ export class SiteCrawler extends EventEmitter {
     };
 
     try {
-      pageContext = await this.browserManager.createPageContext();
+      pageContext = await this.createPageContextWithTimeout();
       page = pageContext.page;
       page.setDefaultTimeout(this.pageTimeoutMs);
 
@@ -594,7 +594,30 @@ export class SiteCrawler extends EventEmitter {
 
   isBrowserDisconnectError(error) {
     const message = error?.message || String(error || '');
-    return /target (?:page, )?context or browser has been closed|browser has been closed|browser closed|browser.*disconnected|page crashed|target closed/i.test(message);
+    return /target (?:page, )?context or browser has been closed|browser has been closed|browser closed|browser.*disconnected|browser context creation timed out|page crashed|target closed/i.test(message);
+  }
+
+  async createPageContextWithTimeout() {
+    let timedOut = false;
+    let timeoutId = null;
+    const contextPromise = this.browserManager.createPageContext().then(async pageContext => {
+      if (timedOut) await this.closePageContext(pageContext);
+      return pageContext;
+    });
+
+    try {
+      return await Promise.race([
+        contextPromise,
+        new Promise((resolve, reject) => {
+          timeoutId = setTimeout(() => {
+            timedOut = true;
+            reject(new Error(`Browser context creation timed out after ${this.pageTimeoutMs}ms`));
+          }, this.pageTimeoutMs);
+        })
+      ]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
   }
 
   async checkLinkStatuses(links) {

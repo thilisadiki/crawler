@@ -3,6 +3,9 @@ import fs from 'fs';
 import path from 'path';
 
 let sparticuzRuntimePromise = null;
+let sharedSparticuzBrowser = null;
+let sharedSparticuzLaunchPromise = null;
+let sharedSparticuzLeaseCount = 0;
 
 const localTmpDir = path.join(process.cwd(), '.tmp');
 try {
@@ -90,6 +93,39 @@ async function getSparticuzRuntime() {
   return sparticuzRuntimePromise;
 }
 
+async function getSharedSparticuzBrowser(launchOptions, executablePath) {
+  if (sharedSparticuzBrowser?.isConnected()) return sharedSparticuzBrowser;
+  if (sharedSparticuzLaunchPromise) return sharedSparticuzLaunchPromise;
+
+  sharedSparticuzLaunchPromise = (async () => {
+    console.log('Launching shared Hostinger-compatible @sparticuz/chromium at:', executablePath);
+    let browser = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        browser = await chromium.launch(launchOptions);
+        break;
+      } catch (error) {
+        const isExecutableBusy = /ETXTBSY|text file busy/i.test(error?.message || '');
+        if (!isExecutableBusy || attempt === 3) throw error;
+        const retryDelayMs = attempt * 300;
+        console.warn(`Chromium executable is temporarily busy; retrying launch in ${retryDelayMs}ms.`);
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      }
+    }
+    sharedSparticuzBrowser = browser;
+    browser.once('disconnected', () => {
+      if (sharedSparticuzBrowser === browser) sharedSparticuzBrowser = null;
+    });
+    return browser;
+  })();
+
+  try {
+    return await sharedSparticuzLaunchPromise;
+  } finally {
+    sharedSparticuzLaunchPromise = null;
+  }
+}
+
 export class BrowserManager {
   constructor(options = {}) {
     this.browser = null;
@@ -102,6 +138,7 @@ export class BrowserManager {
     this.launchCount = 0;
     this.restartCount = 0;
     this.disconnectCount = 0;
+    this.sharedSparticuzLease = false;
     this.headless = options.headless !== undefined ? options.headless : true;
     this.userAgent = options.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
     this.proxy = options.proxy || null;
@@ -123,6 +160,10 @@ export class BrowserManager {
       browser.once('disconnected', () => {
         if (this.browser === browser) {
           this.browser = null;
+          if (this.sharedSparticuzLease) {
+            this.sharedSparticuzLease = false;
+            sharedSparticuzLeaseCount = Math.max(0, sharedSparticuzLeaseCount - 1);
+          }
           this.disconnectCount++;
           console.warn(`Chromium disconnected unexpectedly (disconnect #${this.disconnectCount}). It will be relaunched for the next page.`);
         }
@@ -176,26 +217,15 @@ export class BrowserManager {
         '--disable-dev-shm-usage'
       ])]
     };
-    if (this.proxy) launchOptions.proxy = { server: this.proxy };
-
-    console.log('Launching Hostinger-compatible @sparticuz/chromium at:', executablePath);
-    let browser = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        browser = await chromium.launch(launchOptions);
-        break;
-      } catch (error) {
-        const isExecutableBusy = /ETXTBSY|text file busy/i.test(error?.message || '');
-        if (!isExecutableBusy || attempt === 3) throw error;
-        const retryDelayMs = attempt * 300;
-        console.warn(`Chromium executable is temporarily busy; retrying launch in ${retryDelayMs}ms.`);
-        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
-      }
+    const browser = await getSharedSparticuzBrowser(launchOptions, executablePath);
+    if (!this.sharedSparticuzLease) {
+      this.sharedSparticuzLease = true;
+      sharedSparticuzLeaseCount++;
     }
     this.provider = 'sparticuz';
     this.executablePath = executablePath;
     this.browserVersion = browser.version();
-    console.log(`Chromium started successfully with @sparticuz/chromium (${this.browserVersion}).`);
+    console.log(`Shared Chromium ready with @sparticuz/chromium (${this.browserVersion}); active crawler leases: ${sharedSparticuzLeaseCount}.`);
     return browser;
   }
 
@@ -252,7 +282,9 @@ export class BrowserManager {
       launchErrors: [...this.launchErrors],
       launchCount: this.launchCount,
       restartCount: this.restartCount,
-      disconnectCount: this.disconnectCount
+      disconnectCount: this.disconnectCount,
+      sharedBrowser: this.provider === 'sparticuz',
+      sharedBrowserLeases: this.provider === 'sparticuz' ? sharedSparticuzLeaseCount : 0
     };
   }
 
@@ -308,6 +340,9 @@ export class BrowserManager {
     if (geolocation) {
       contextOptions.geolocation = geolocation;
       contextOptions.permissions = ['geolocation'];
+    }
+    if (this.proxy) {
+      contextOptions.proxy = { server: this.proxy };
     }
 
     const context = await browser.newContext(contextOptions);
@@ -405,6 +440,15 @@ export class BrowserManager {
   async close() {
     const browser = this.browser;
     this.browser = null;
+    if (this.sharedSparticuzLease) {
+      this.sharedSparticuzLease = false;
+      sharedSparticuzLeaseCount = Math.max(0, sharedSparticuzLeaseCount - 1);
+      if (browser && sharedSparticuzBrowser === browser && sharedSparticuzLeaseCount === 0) {
+        sharedSparticuzBrowser = null;
+        await browser.close().catch(() => {});
+      }
+      return;
+    }
     if (browser) await browser.close().catch(() => {});
   }
 }

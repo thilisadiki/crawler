@@ -36,6 +36,10 @@ The link-check settings prevent a slow or rate-limited target from occupying a c
 indefinitely. Keep the defaults when enabling simultaneous crawls; raising link concurrency can
 multiply outbound requests across all active users.
 
+On Hostinger Linux, simultaneous crawls share one Chromium process but use separate browser
+contexts. Cookies, pages, geo settings, crawl queues, results, controls, and exports remain isolated
+per user. This avoids duplicating Chromium's parent-process overhead in constrained containers.
+
 Suggested starting points:
 
 | Host resources | Concurrent crawls | Workers per crawl |
