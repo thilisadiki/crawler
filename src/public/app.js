@@ -1,4 +1,32 @@
 // Application State
+const CRAWLER_SESSION_STORAGE_KEY = 'omnicrawl-tab-session';
+
+function createCrawlerSessionId() {
+  const randomId = globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  return `tab_${randomId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+}
+
+let crawlerSessionId;
+try {
+  crawlerSessionId = sessionStorage.getItem(CRAWLER_SESSION_STORAGE_KEY);
+  if (!crawlerSessionId) {
+    crawlerSessionId = createCrawlerSessionId();
+    sessionStorage.setItem(CRAWLER_SESSION_STORAGE_KEY, crawlerSessionId);
+  }
+} catch (e) {
+  crawlerSessionId = createCrawlerSessionId();
+}
+
+function crawlerApiUrl(pathname) {
+  const url = new URL(pathname, window.location.origin);
+  url.searchParams.set('sessionId', crawlerSessionId);
+  return `${url.pathname}${url.search}`;
+}
+
+function crawlerFetch(pathname, options) {
+  return fetch(crawlerApiUrl(pathname), options);
+}
+
 let crawlResults = [];
 let allDiscoveredLinks = [];
 let activeFilter = 'all';
@@ -95,6 +123,10 @@ const modalLinksCount = document.getElementById('modalLinksCount');
 const modalLinksTableBody = document.getElementById('modalLinksTableBody');
 const modalLinksFilter = document.getElementById('modalLinksFilter');
 
+document.querySelectorAll('a[href^="/api/export/"]').forEach(link => {
+  link.href = crawlerApiUrl(link.getAttribute('href'));
+});
+
 // View Tab Switcher
 viewTabButtons.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -137,7 +169,21 @@ let statusPollingInterval = null;
 
 function initEventSource() {
   try {
-    const evtSource = new EventSource('/api/crawler/stream');
+    const evtSource = new EventSource(crawlerApiUrl('/api/crawler/stream'));
+
+    evtSource.addEventListener('status', async (e) => {
+      const data = JSON.parse(e.data);
+      activeEngine = data.engine || activeEngine;
+      if (data.stats) updateStats(data.stats, data.queueLength);
+      if (data.isRunning) {
+        updateUIStatus(data.isPaused ? 'paused' : 'running');
+        if (!data.isPaused) startTimer();
+        startPolling();
+      } else if (data.stats) {
+        updateUIStatus('completed');
+      }
+      await restoreSessionResults();
+    });
 
     evtSource.addEventListener('started', () => {
       crawlResults = [];
@@ -240,7 +286,7 @@ function startPolling() {
   if (statusPollingInterval) return;
   statusPollingInterval = setInterval(async () => {
     try {
-      const statusRes = await fetch('/api/crawler/status');
+      const statusRes = await crawlerFetch('/api/crawler/status');
       if (!statusRes.ok) return;
       const statusData = await statusRes.json();
       activeEngine = statusData.engine || activeEngine;
@@ -259,7 +305,7 @@ function startPolling() {
         }
         
         // Fetch incremental results
-        const resList = await fetch('/api/crawler/results');
+        const resList = await crawlerFetch('/api/crawler/results');
         if (resList.ok) {
           const { results } = await resList.json();
           if (results && results.length > crawlResults.length) {
@@ -285,6 +331,47 @@ function startPolling() {
       }
     } catch (e) {}
   }, 1500);
+}
+
+async function restoreSessionResults() {
+  try {
+    const resultsResponse = await crawlerFetch('/api/crawler/results');
+    if (resultsResponse.ok) {
+      const data = await resultsResponse.json();
+      crawlResults = data.results || [];
+      allDiscoveredLinks = [];
+      crawlResults.forEach(result => {
+        (result.links || []).forEach(link => {
+          allDiscoveredLinks.push({ ...link, sourceUrl: result.url });
+        });
+      });
+    }
+    renderCurrentViews();
+  } catch (e) {}
+}
+
+async function restoreSessionState() {
+  try {
+    const response = await crawlerFetch('/api/crawler/status');
+    if (!response.ok) return;
+    const status = await response.json();
+    activeEngine = status.engine || null;
+
+    if (!status.stats) {
+      updateUIStatus('ready');
+      return;
+    }
+
+    updateStats(status.stats, status.queueLength);
+    await restoreSessionResults();
+    if (status.isRunning) {
+      updateUIStatus(status.isPaused ? 'paused' : 'running');
+      if (!status.isPaused) startTimer();
+      startPolling();
+    } else {
+      updateUIStatus('completed');
+    }
+  } catch (e) {}
 }
 
 function stopPolling() {
@@ -953,7 +1040,7 @@ crawlForm.addEventListener('submit', async (e) => {
   const includePatterns = includePatternsInput.value.split('\n').map(s => s.trim()).filter(Boolean);
 
   try {
-    const res = await fetch('/api/crawler/start', {
+    const res = await crawlerFetch('/api/crawler/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1000,12 +1087,12 @@ pauseBtn.addEventListener('click', async () => {
     if (pauseBtn.textContent.includes('Pause')) {
       updateUIStatus('paused');
       stopTimer(true);
-      await fetch('/api/crawler/pause', { method: 'POST' });
+      await crawlerFetch('/api/crawler/pause', { method: 'POST' });
     } else {
       updateUIStatus('running');
       startTimer();
       startPolling();
-      await fetch('/api/crawler/resume', { method: 'POST' });
+      await crawlerFetch('/api/crawler/resume', { method: 'POST' });
     }
   } catch (err) {
     console.error('Pause/Resume toggle failed:', err);
@@ -1015,12 +1102,12 @@ pauseBtn.addEventListener('click', async () => {
 });
 
 stopBtn.addEventListener('click', async () => {
-  await fetch('/api/crawler/stop', { method: 'POST' });
+  await crawlerFetch('/api/crawler/stop', { method: 'POST' });
 });
 
 resetBtn.addEventListener('click', async () => {
   try {
-    await fetch('/api/crawler/reset', { method: 'POST' });
+    await crawlerFetch('/api/crawler/reset', { method: 'POST' });
   } catch (e) {}
 
   crawlResults = [];
@@ -1073,4 +1160,4 @@ filterTabs.forEach(pill => {
 });
 
 // Initialize on Load
-initEventSource();
+restoreSessionState().finally(initEventSource);

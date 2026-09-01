@@ -13,12 +13,53 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'src', 'public')));
 
-let activeCrawler = null;
+const crawlerSessions = new Map();
+const runningCrawlers = new Set();
 let sseClients = [];
+const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
+const MAX_RETAINED_SESSIONS = 25;
 
-function broadcastSSE(eventType, data) {
+function getSessionId(req) {
+  const candidate = req.get('x-crawler-session') || req.query.sessionId || req.body?.sessionId || 'default';
+  return /^[a-zA-Z0-9_-]{8,128}$/.test(candidate) ? candidate : 'default';
+}
+
+function getSessionCrawler(req) {
+  const sessionId = getSessionId(req);
+  const record = crawlerSessions.get(sessionId);
+  if (record) record.updatedAt = Date.now();
+  return { sessionId, crawler: record?.crawler || null };
+}
+
+function pruneCrawlerSessions() {
+  const now = Date.now();
+  for (const [sessionId, record] of crawlerSessions) {
+    if (!record.crawler.isRunning && now - record.updatedAt > SESSION_TTL_MS) {
+      crawlerSessions.delete(sessionId);
+    }
+  }
+
+  if (crawlerSessions.size <= MAX_RETAINED_SESSIONS) return;
+  const removable = [...crawlerSessions.entries()]
+    .filter(([, record]) => !record.crawler.isRunning)
+    .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
+  while (crawlerSessions.size > MAX_RETAINED_SESSIONS && removable.length > 0) {
+    crawlerSessions.delete(removable.shift()[0]);
+  }
+}
+
+function hasRunningCrawler() {
+  for (const crawler of runningCrawlers) {
+    if (crawler.isRunning) return true;
+  }
+  return false;
+}
+
+function broadcastSSE(sessionId, eventType, data) {
+  const record = crawlerSessions.get(sessionId);
+  if (record) record.updatedAt = Date.now();
   const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
-  sseClients.forEach(client => {
+  sseClients.filter(client => client.sessionId === sessionId).forEach(client => {
     try {
       client.res.write(payload);
     } catch (e) {}
@@ -27,6 +68,8 @@ function broadcastSSE(eventType, data) {
 
 // SSE Stream for real-time crawler updates
 app.get('/api/crawler/stream', (req, res) => {
+  pruneCrawlerSessions();
+  const { sessionId, crawler } = getSessionCrawler(req);
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -34,30 +77,35 @@ app.get('/api/crawler/stream', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.flushHeaders();
 
-  const clientId = Date.now();
-  const newClient = { id: clientId, res };
+  const newClient = { sessionId, res };
   sseClients.push(newClient);
 
-  if (activeCrawler) {
+  if (crawler) {
     res.write(`event: status\ndata: ${JSON.stringify({
-      isRunning: activeCrawler.isRunning,
-      isPaused: activeCrawler.isPaused,
-      stats: activeCrawler.stats,
-      queueLength: activeCrawler.queue.length,
-      config: activeCrawler.getConfigSummary()
+      isRunning: crawler.isRunning,
+      isPaused: crawler.isPaused,
+      stats: crawler.stats,
+      queueLength: crawler.queue.length,
+      config: crawler.getConfigSummary(),
+      engine: crawler.getEngineStatus()
     })}\n\n`);
   }
 
   req.on('close', () => {
-    sseClients = sseClients.filter(c => c.id !== clientId);
+    sseClients = sseClients.filter(client => client !== newClient);
   });
 });
 
 // Start Crawl
 app.post('/api/crawler/start', (req, res) => {
   try {
-    if (activeCrawler && activeCrawler.isRunning) {
+    pruneCrawlerSessions();
+    const { sessionId, crawler: existingCrawler } = getSessionCrawler(req);
+    if (existingCrawler?.isRunning) {
       return res.status(400).json({ error: 'A crawl is already running. Please stop or wait for it to finish.' });
+    }
+    if (hasRunningCrawler()) {
+      return res.status(409).json({ error: 'Another browser tab is currently running a crawl. This Hostinger deployment allows one cloud-browser crawl at a time.' });
     }
 
     const {
@@ -83,7 +131,7 @@ app.post('/api/crawler/start', (req, res) => {
 
     const cleanProxy = (proxy && typeof proxy === 'string') ? proxy.trim() || null : null;
 
-    activeCrawler = new SiteCrawler({
+    const crawler = new SiteCrawler({
       seedUrl,
       crawlScope,
       maxDepth,
@@ -99,24 +147,33 @@ app.post('/api/crawler/start', (req, res) => {
       proxy: cleanProxy,
       blockCrossDomainRedirects
     });
+    crawlerSessions.set(sessionId, { crawler, updatedAt: Date.now() });
+    runningCrawlers.add(crawler);
+    const sendCrawlerEvent = (eventType, data) => {
+      if (crawlerSessions.get(sessionId)?.crawler === crawler) {
+        broadcastSSE(sessionId, eventType, data);
+      }
+    };
 
     // Attach event handlers
-    activeCrawler.on('started', data => broadcastSSE('started', data));
-    activeCrawler.on('engineSelected', data => broadcastSSE('engineSelected', data));
-    activeCrawler.on('pageCrawled', data => broadcastSSE('pageCrawled', data));
-    activeCrawler.on('paused', () => broadcastSSE('paused', {}));
-    activeCrawler.on('resumed', () => broadcastSSE('resumed', {}));
-    activeCrawler.on('stopped', () => broadcastSSE('stopped', {}));
-    activeCrawler.on('completed', data => broadcastSSE('completed', data));
-    activeCrawler.on('error', data => broadcastSSE('error', data));
+    crawler.on('started', data => sendCrawlerEvent('started', data));
+    crawler.on('engineSelected', data => sendCrawlerEvent('engineSelected', data));
+    crawler.on('pageCrawled', data => sendCrawlerEvent('pageCrawled', data));
+    crawler.on('paused', () => sendCrawlerEvent('paused', {}));
+    crawler.on('resumed', () => sendCrawlerEvent('resumed', {}));
+    crawler.on('stopped', () => sendCrawlerEvent('stopped', {}));
+    crawler.on('completed', data => sendCrawlerEvent('completed', data));
+    crawler.on('error', data => sendCrawlerEvent('error', data));
 
     // Run in background
-    activeCrawler.start().catch(err => {
-      console.error('Crawler engine error:', err);
-      broadcastSSE('error', { message: err.message });
-    });
+    crawler.start()
+      .catch(err => {
+        console.error('Crawler engine error:', err);
+        sendCrawlerEvent('error', { message: err.message });
+      })
+      .finally(() => runningCrawlers.delete(crawler));
 
-    return res.json({ success: true, message: 'Crawl started', config: activeCrawler.getConfigSummary() });
+    return res.json({ success: true, message: 'Crawl started', config: crawler.getConfigSummary() });
   } catch (err) {
     console.error('Failed to start crawler:', err);
     return res.status(500).json({ error: err.message });
@@ -125,24 +182,27 @@ app.post('/api/crawler/start', (req, res) => {
 
 // Controls
 app.post('/api/crawler/pause', (req, res) => {
-  if (activeCrawler && activeCrawler.isRunning) {
-    activeCrawler.pause();
+  const { crawler } = getSessionCrawler(req);
+  if (crawler?.isRunning) {
+    crawler.pause();
     return res.json({ success: true, message: 'Crawl paused' });
   }
   res.status(400).json({ error: 'No active running crawl to pause.' });
 });
 
 app.post('/api/crawler/resume', (req, res) => {
-  if (activeCrawler && activeCrawler.isRunning) {
-    activeCrawler.resume();
+  const { crawler } = getSessionCrawler(req);
+  if (crawler?.isRunning) {
+    crawler.resume();
     return res.json({ success: true, message: 'Crawl resumed' });
   }
   res.status(400).json({ error: 'No active crawl to resume.' });
 });
 
 app.post('/api/crawler/stop', (req, res) => {
-  if (activeCrawler && activeCrawler.isRunning) {
-    activeCrawler.stop();
+  const { crawler } = getSessionCrawler(req);
+  if (crawler?.isRunning) {
+    crawler.stop();
     return res.json({ success: true, message: 'Crawl stopped' });
   }
   res.status(400).json({ error: 'No active crawl to stop.' });
@@ -151,13 +211,14 @@ app.post('/api/crawler/stop', (req, res) => {
 // Clear / Reset Crawl State
 app.post('/api/crawler/reset', (req, res) => {
   try {
-    if (activeCrawler) {
-      if (activeCrawler.isRunning) {
-        activeCrawler.stop();
+    const { sessionId, crawler } = getSessionCrawler(req);
+    if (crawler) {
+      if (crawler.isRunning) {
+        crawler.stop();
       }
-      activeCrawler = null;
+      crawlerSessions.delete(sessionId);
     }
-    broadcastSSE('reset', {});
+    broadcastSSE(sessionId, 'reset', {});
     return res.json({ success: true, message: 'Crawl state reset successfully' });
   } catch (err) {
     console.error('Failed to reset crawler:', err);
@@ -192,38 +253,42 @@ app.get('/api/debug/browser', async (req, res) => {
 
 // Status & Results
 app.get('/api/crawler/status', (req, res) => {
-  if (!activeCrawler) {
+  const { crawler } = getSessionCrawler(req);
+  if (!crawler) {
     return res.json({ isRunning: false, stats: null, resultsCount: 0, engine: null });
   }
   res.json({
-    isRunning: activeCrawler.isRunning,
-    isPaused: activeCrawler.isPaused,
-    stats: activeCrawler.stats,
-    lastError: activeCrawler.lastError || null,
-    queueLength: activeCrawler.queue.length,
-    resultsCount: activeCrawler.results.length,
-    config: activeCrawler.getConfigSummary(),
-    engine: activeCrawler.getEngineStatus()
+    isRunning: crawler.isRunning,
+    isPaused: crawler.isPaused,
+    stats: crawler.stats,
+    lastError: crawler.lastError || null,
+    queueLength: crawler.queue.length,
+    resultsCount: crawler.results.length,
+    config: crawler.getConfigSummary(),
+    engine: crawler.getEngineStatus()
   });
 });
 
 app.get('/api/crawler/results', (req, res) => {
-  if (!activeCrawler) return res.json({ results: [] });
-  res.json({ results: activeCrawler.results });
+  const { crawler } = getSessionCrawler(req);
+  if (!crawler) return res.json({ results: [] });
+  res.json({ results: crawler.results });
 });
 
 app.get('/api/crawler/links', (req, res) => {
-  if (!activeCrawler) return res.json({ links: [] });
-  res.json({ links: activeCrawler.allLinks });
+  const { crawler } = getSessionCrawler(req);
+  if (!crawler) return res.json({ links: [] });
+  res.json({ links: crawler.allLinks });
 });
 
 // Export Endpoints
 app.get(['/api/export/workbook.xlsx', '/api/export/excel'], async (req, res) => {
-  if (!activeCrawler || !activeCrawler.results.length) {
+  const { crawler } = getSessionCrawler(req);
+  if (!crawler || !crawler.results.length) {
     return res.status(400).send('No crawl data available to export.');
   }
   try {
-    const buffer = await Exporter.generateMultiSheetWorkbook(activeCrawler.results, activeCrawler.allLinks);
+    const buffer = await Exporter.generateMultiSheetWorkbook(crawler.results, crawler.allLinks);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="OmniCrawl_MultiSheet_Report_${Date.now()}.xlsx"`);
     res.send(buffer);
@@ -234,30 +299,33 @@ app.get(['/api/export/workbook.xlsx', '/api/export/excel'], async (req, res) => 
 });
 
 app.get('/api/export/pages.csv', (req, res) => {
-  if (!activeCrawler || !activeCrawler.results.length) {
+  const { crawler } = getSessionCrawler(req);
+  if (!crawler || !crawler.results.length) {
     return res.status(400).send('No crawl data available to export.');
   }
-  const csv = Exporter.generatePagesCSV(activeCrawler.results);
+  const csv = Exporter.generatePagesCSV(crawler.results);
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="seo_pages_crawl_${Date.now()}.csv"`);
   res.send(csv);
 });
 
 app.get('/api/export/links.csv', (req, res) => {
-  if (!activeCrawler || !activeCrawler.allLinks.length) {
+  const { crawler } = getSessionCrawler(req);
+  if (!crawler || !crawler.allLinks.length) {
     return res.status(400).send('No links data available to export.');
   }
-  const csv = Exporter.generateLinksCSV(activeCrawler.allLinks);
+  const csv = Exporter.generateLinksCSV(crawler.allLinks);
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="all_links_crawl_${Date.now()}.csv"`);
   res.send(csv);
 });
 
 app.get(['/api/export/custom-content.csv', '/api/export/kentico.csv'], (req, res) => {
-  if (!activeCrawler || !activeCrawler.results.length) {
+  const { crawler } = getSessionCrawler(req);
+  if (!crawler || !crawler.results.length) {
     return res.status(400).send('No crawl data available to export.');
   }
-  const csv = Exporter.generateCustomContentReportCSV(activeCrawler.results);
+  const csv = Exporter.generateCustomContentReportCSV(crawler.results);
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', `attachment; filename="custom_content_report_${Date.now()}.csv"`);
   res.send(csv);
