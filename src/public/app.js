@@ -299,6 +299,8 @@ function updateUIStatus(state) {
   if (state === 'running') {
     if (activeEngine?.mode === 'browser') {
       statusText.textContent = activeEngine.provider === 'sparticuz' ? 'Cloud Browser Active' : 'Browser Engine Active';
+    } else if (activeEngine?.mode === 'recovering') {
+      statusText.textContent = 'Recovering Browser';
     } else if (activeEngine?.mode === 'http') {
       statusText.textContent = 'Direct DOM Active';
     } else {

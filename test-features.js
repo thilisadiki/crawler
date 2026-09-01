@@ -67,6 +67,19 @@ async function runTests() {
   assert.strictEqual(excludeCrawler.isUrlAllowedInScope('https://example.com/other/page'), true, 'Should be allowed');
   console.log('✅ Exclusion filter tests passed');
 
+  console.log('--- 5. Testing Browser Disconnect Detection ---');
+  assert.strictEqual(
+    excludeCrawler.isBrowserDisconnectError(new Error('browserContext.newPage: Target page, context or browser has been closed')),
+    true,
+    'Closed browser contexts should trigger Chromium recovery'
+  );
+  assert.strictEqual(
+    excludeCrawler.isBrowserDisconnectError(new Error('Navigation timed out after 30000ms')),
+    false,
+    'Ordinary page errors should not restart the shared browser'
+  );
+  console.log('✅ Browser disconnect detection tests passed');
+
   console.log('\n🎉 ALL AUTOMATED TESTS PASSED SUCCESSFULLY!');
 }
 

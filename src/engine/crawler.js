@@ -95,6 +95,8 @@ export class SiteCrawler extends EventEmitter {
       customDetectedCount: 0,
       blockedByRobotsCount: 0,
       excludedByRulesCount: 0,
+      browserRestartsCount: 0,
+      browserFallbacksCount: 0,
       startTime: null,
       endTime: null
     };
@@ -232,7 +234,7 @@ export class SiteCrawler extends EventEmitter {
     }
   }
 
-  async processPageHttp(item, workerId) {
+  async processPageHttp(item, workerId, browserFailure = null) {
     const { url, depth, sourceUrl } = item;
     const pageStartTime = Date.now();
 
@@ -258,10 +260,13 @@ export class SiteCrawler extends EventEmitter {
       externalLinksCount: 0,
       customLinksCount: 0,
       links: [],
+      renderMode: browserFailure ? 'direct-dom-fallback' : 'direct-dom',
+      renderError: browserFailure?.message || null,
       error: null,
       timestamp: new Date().toISOString()
     };
 
+    let httpFailed = false;
     try {
       const geo = this.geo || {};
       const headers = {
@@ -349,9 +354,15 @@ export class SiteCrawler extends EventEmitter {
         }
       }
     } catch (err) {
+      httpFailed = true;
       crawlResult.statusCode = crawlResult.statusCode === 200 ? 500 : (crawlResult.statusCode || 500);
       crawlResult.statusText = err.name || 'Crawl Error';
       crawlResult.error = err.message;
+      this.stats.errorsCount++;
+    }
+
+    if (browserFailure && !httpFailed) {
+      crawlResult.error = `Browser rendering failed; Direct DOM fallback may not include client-rendered content: ${browserFailure.message}`;
       this.stats.errorsCount++;
     }
 
@@ -366,7 +377,7 @@ export class SiteCrawler extends EventEmitter {
     });
   }
 
-  async processPage(item, workerId) {
+  async processPage(item, workerId, retryAttempt = 0) {
     const { url, depth, sourceUrl } = item;
     const pageStartTime = Date.now();
     let pageContext = null;
@@ -394,6 +405,8 @@ export class SiteCrawler extends EventEmitter {
       externalLinksCount: 0,
       customLinksCount: 0,
       links: [],
+      renderMode: 'browser',
+      renderError: null,
       error: null,
       timestamp: new Date().toISOString()
     };
@@ -426,8 +439,12 @@ export class SiteCrawler extends EventEmitter {
         } catch (e) {}
       }
 
-      // Allow dynamic client hydration
-      await page.waitForTimeout(800);
+      // Allow Nuxt/Next/SPA routes to hydrate before extracting their DOM.
+      await page.waitForFunction(() => {
+        const bodyText = document.body?.innerText?.trim() || '';
+        return document.querySelectorAll('a[href]').length > 0 || bodyText.length > 200;
+      }, null, { timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(500);
 
       // Auto-scroll for lazy loaded widgets
       if (this.autoScroll) {
@@ -438,6 +455,12 @@ export class SiteCrawler extends EventEmitter {
       const extracted = await Extractor.extractPageData(page, url, this.baseOrigin, {
         customSelector: this.customContentSelector
       });
+
+      // The page is no longer needed once its DOM has been extracted. Releasing it
+      // before link checks keeps Chromium memory stable on constrained cloud hosts.
+      await pageContext.context.close().catch(() => {});
+      pageContext = null;
+      page = null;
 
       // Verify HTTP status code for every internal and external link in parallel
       if (extracted.links && extracted.links.length > 0) {
@@ -511,18 +534,43 @@ export class SiteCrawler extends EventEmitter {
       crawlResult.responseTimeMs = Date.now() - pageStartTime;
 
     } catch (err) {
-      console.warn(`Browser execution encountered an issue for ${url} (${err.message}). Switching to the Direct DOM engine.`);
-      this.isBrowserMode = false;
-      this.engineMode = 'http';
-      this.engineProvider = 'direct-dom';
-      this.engineError = err.message;
-      this.emit('engineSelected', this.getEngineStatus());
       if (pageContext) {
         await pageContext.context.close().catch(() => {});
         pageContext = null;
       }
-      // Retry this page immediately via processPageHttp so it never fails with 500
-      await this.processPageHttp(item, workerId);
+
+      const browserError = err instanceof Error ? err : new Error(String(err));
+      const canRestart = retryAttempt < 1 && this.isBrowserDisconnectError(browserError);
+
+      if (canRestart) {
+        console.warn(`Chromium became unavailable while rendering ${url}. Restarting it and retrying this URL once.`);
+        this.stats.browserRestartsCount++;
+        this.engineMode = 'recovering';
+        this.engineError = browserError.message;
+        this.emit('engineSelected', this.getEngineStatus());
+
+        try {
+          await this.browserManager.restart(`render failure for ${url}`);
+          this.engineMode = 'browser';
+          this.engineProvider = this.browserManager.provider;
+          this.engineError = null;
+          this.emit('engineSelected', this.getEngineStatus());
+          await this.processPage(item, workerId, retryAttempt + 1);
+          return;
+        } catch (restartError) {
+          browserError.message = `${browserError.message}; Chromium restart failed: ${restartError.message}`;
+        }
+      }
+
+      // Keep browser mode enabled for later URLs. A single problematic route should
+      // not force the rest of a JavaScript site into an unrendered HTTP-only crawl.
+      console.warn(`Browser rendering failed for ${url} (${browserError.message}). Falling back for this URL only.`);
+      this.stats.browserFallbacksCount++;
+      this.engineMode = 'browser';
+      this.engineProvider = this.browserManager.provider;
+      this.engineError = `Last page fallback (${url}): ${browserError.message}`;
+      this.emit('engineSelected', this.getEngineStatus());
+      await this.processPageHttp(item, workerId, browserError);
       return;
     } finally {
       if (pageContext) {
@@ -539,6 +587,11 @@ export class SiteCrawler extends EventEmitter {
       stats: { ...this.stats },
       queueLength: this.queue.length
     });
+  }
+
+  isBrowserDisconnectError(error) {
+    const message = error?.message || String(error || '');
+    return /target (?:page, )?context or browser has been closed|browser has been closed|browser closed|browser.*disconnected|page crashed|target closed/i.test(message);
   }
 
   /**

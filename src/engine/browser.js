@@ -72,10 +72,15 @@ export function ensureExecutablePermission(filePath) {
 export class BrowserManager {
   constructor(options = {}) {
     this.browser = null;
+    this.initPromise = null;
+    this.restartPromise = null;
     this.provider = null;
     this.executablePath = null;
     this.browserVersion = null;
     this.launchErrors = [];
+    this.launchCount = 0;
+    this.restartCount = 0;
+    this.disconnectCount = 0;
     this.headless = options.headless !== undefined ? options.headless : true;
     this.userAgent = options.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
     this.proxy = options.proxy || null;
@@ -85,8 +90,29 @@ export class BrowserManager {
   }
 
   async init() {
-    if (this.browser) return this.browser;
+    if (this.browser?.isConnected()) return this.browser;
+    if (this.browser && !this.browser.isConnected()) this.browser = null;
+    if (this.initPromise) return this.initPromise;
 
+    this.initPromise = this.launchPreferredEngine();
+    try {
+      const browser = await this.initPromise;
+      this.browser = browser;
+      this.launchCount++;
+      browser.once('disconnected', () => {
+        if (this.browser === browser) {
+          this.browser = null;
+          this.disconnectCount++;
+          console.warn(`Chromium disconnected unexpectedly (disconnect #${this.disconnectCount}). It will be relaunched for the next page.`);
+        }
+      });
+      return browser;
+    } finally {
+      this.initPromise = null;
+    }
+  }
+
+  async launchPreferredEngine() {
     this.launchErrors = [];
     // Managed Linux hosts usually cannot install Playwright's OS packages. Prefer the
     // self-contained serverless build on Linux unless the deployment overrides it.
@@ -94,8 +120,7 @@ export class BrowserManager {
 
     if (preferredEngine !== 'playwright') {
       try {
-        this.browser = await this.launchSparticuz();
-        return this.browser;
+        return await this.launchSparticuz();
       } catch (err) {
         this.recordLaunchError('sparticuz', err);
       }
@@ -103,8 +128,7 @@ export class BrowserManager {
 
     if (preferredEngine !== 'sparticuz-only') {
       try {
-        this.browser = await this.launchPlaywright();
-        return this.browser;
+        return await this.launchPlaywright();
       } catch (err) {
         this.recordLaunchError('playwright', err);
       }
@@ -124,11 +148,14 @@ export class BrowserManager {
     }
 
     ensureExecutablePermission(executablePath);
+    const useSingleProcess = process.env.CHROMIUM_SINGLE_PROCESS === 'true';
+    const incompatibleHostingerArgs = new Set(['--single-process', '--no-zygote']);
+    const serverlessArgs = sparticuzChromium.args.filter(arg => useSingleProcess || !incompatibleHostingerArgs.has(arg));
     const launchOptions = {
       headless: true,
       executablePath,
       args: [...new Set([
-        ...sparticuzChromium.args,
+        ...serverlessArgs,
         '--disable-blink-features=AutomationControlled',
         '--disable-dev-shm-usage'
       ])]
@@ -158,11 +185,12 @@ export class BrowserManager {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
-        '--no-zygote',
-        '--single-process',
         '--disable-web-security',
         '--disable-features=IsolateOrigins,site-per-process'
       );
+      if (process.env.CHROMIUM_SINGLE_PROCESS === 'true') {
+        args.push('--no-zygote', '--single-process');
+      }
     }
 
     const launchOptions = {
@@ -193,8 +221,28 @@ export class BrowserManager {
       provider: this.provider,
       executablePath: this.executablePath,
       browserVersion: this.browserVersion,
-      launchErrors: [...this.launchErrors]
+      launchErrors: [...this.launchErrors],
+      launchCount: this.launchCount,
+      restartCount: this.restartCount,
+      disconnectCount: this.disconnectCount
     };
+  }
+
+  async restart(reason = 'browser recovery') {
+    if (this.restartPromise) return this.restartPromise;
+
+    this.restartPromise = (async () => {
+      console.warn(`Restarting Chromium after ${reason}.`);
+      await this.close();
+      this.restartCount++;
+      return this.init();
+    })();
+
+    try {
+      return await this.restartPromise;
+    } finally {
+      this.restartPromise = null;
+    }
   }
 
   async createPageContext() {
@@ -225,6 +273,7 @@ export class BrowserManager {
       locale,
       timezoneId,
       ignoreHTTPSErrors: true,
+      serviceWorkers: 'block',
       extraHTTPHeaders: extraHeaders
     };
 
@@ -234,6 +283,24 @@ export class BrowserManager {
     }
 
     const context = await browser.newContext(contextOptions);
+
+    // SEO extraction only needs the DOM. Avoid expensive media, font, analytics, and
+    // anti-bot resources that can exhaust managed-hosting browser memory.
+    await context.route('**/*', async route => {
+      const request = route.request();
+      const resourceType = request.resourceType();
+      const requestUrl = request.url();
+      const isHeavyAsset = resourceType === 'image' || resourceType === 'media' || resourceType === 'font';
+      const isNonEssentialThirdParty = /google-analytics\.com|googletagmanager\.com|doubleclick\.net|connect\.facebook\.net|\/recaptcha\//i.test(requestUrl);
+
+      try {
+        if (isHeavyAsset || isNonEssentialThirdParty) {
+          await route.abort();
+        } else {
+          await route.continue();
+        }
+      } catch (e) {}
+    });
 
     // Mask webdriver and set geo scripts
     await context.addInitScript(({ spoofLocale, spoofTimezone }) => {
@@ -308,9 +375,8 @@ export class BrowserManager {
   }
 
   async close() {
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-    }
+    const browser = this.browser;
+    this.browser = null;
+    if (browser) await browser.close().catch(() => {});
   }
 }
