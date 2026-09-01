@@ -20,7 +20,27 @@ For an explicit setting, add this environment variable in hPanel:
 
 ```text
 CHROMIUM_ENGINE=sparticuz-only
+MAX_CONCURRENT_CRAWLS=2
+MAX_WORKERS_PER_CRAWL=1
 ```
+
+`MAX_CONCURRENT_CRAWLS` controls how many isolated users may crawl simultaneously (allowed range
+1–8). `MAX_WORKERS_PER_CRAWL` controls the number of browser pages used by each crawl (allowed
+range 1–3). The application defaults to 2 simultaneous crawls with 1 worker each. Increase the
+crawl count before increasing workers, because every additional worker creates another rendered
+page and raises Chromium memory usage.
+
+Suggested starting points:
+
+| Host resources | Concurrent crawls | Workers per crawl |
+| --- | ---: | ---: |
+| 4 GB RAM / 4 CPU | 2 | 1 |
+| 6 GB RAM / 5 CPU | 2–3 | 1 |
+| 12 GB RAM / 6 CPU | 4 | 1 |
+| 15–16 GB RAM / 8 CPU | 5–6 | 1 |
+
+Apply environment-variable changes in hPanel before testing. Start conservatively and check memory,
+CPU, crawl latency, browser restart count, and HTTP 503 responses before increasing either limit.
 
 After deployment, open `/api/debug/browser`. A working deployment returns HTTP 200 with values
 similar to:
@@ -37,5 +57,5 @@ The dashboard should display **Cloud Browser Active** during a crawl. If it disp
 **Direct DOM Active**, inspect the diagnostic endpoint and Hostinger runtime logs for the original
 browser launch error.
 
-Start production testing with one worker. Increase concurrency only after checking CPU and memory
-usage in hPanel.
+Keep one worker per crawl initially. Increase `MAX_WORKERS_PER_CRAWL` only after checking CPU and
+memory usage in hPanel under simultaneous load.

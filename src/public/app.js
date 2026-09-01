@@ -38,6 +38,7 @@ let timerInterval = null;
 let accumulatedElapsedMs = 0;
 let sessionStartTime = null;
 let activeEngine = null;
+let activeCapacity = null;
 
 // Sort States
 let pagesSort = { column: 'id', direction: 'asc' };
@@ -174,6 +175,7 @@ function initEventSource() {
     evtSource.addEventListener('status', async (e) => {
       const data = JSON.parse(e.data);
       activeEngine = data.engine || activeEngine;
+      applyCrawlCapacity(data.capacity);
       if (data.stats) updateStats(data.stats, data.queueLength);
       if (data.isRunning) {
         updateUIStatus(data.isPaused ? 'paused' : 'running');
@@ -183,6 +185,11 @@ function initEventSource() {
         updateUIStatus('completed');
       }
       await restoreSessionResults();
+    });
+
+    evtSource.addEventListener('capacity', (e) => {
+      applyCrawlCapacity(JSON.parse(e.data));
+      if (statusBadge.classList.contains('ready')) updateUIStatus('ready');
     });
 
     evtSource.addEventListener('started', () => {
@@ -290,6 +297,7 @@ function startPolling() {
       if (!statusRes.ok) return;
       const statusData = await statusRes.json();
       activeEngine = statusData.engine || activeEngine;
+      applyCrawlCapacity(statusData.capacity);
 
       if (statusData.stats) {
         updateStats(statusData.stats, statusData.queueLength);
@@ -356,6 +364,7 @@ async function restoreSessionState() {
     if (!response.ok) return;
     const status = await response.json();
     activeEngine = status.engine || null;
+    applyCrawlCapacity(status.capacity);
 
     if (!status.stats) {
       updateUIStatus('ready');
@@ -378,6 +387,16 @@ function stopPolling() {
   if (statusPollingInterval) {
     clearInterval(statusPollingInterval);
     statusPollingInterval = null;
+  }
+}
+
+function applyCrawlCapacity(capacity) {
+  if (!capacity) return;
+  activeCapacity = capacity;
+  const workerLimit = Number(capacity.maxWorkersPerCrawl) || 1;
+  concurrencyInput.max = String(workerLimit);
+  if (Number(concurrencyInput.value) > workerLimit) {
+    concurrencyInput.value = String(workerLimit);
   }
 }
 
@@ -410,7 +429,14 @@ function updateUIStatus(state) {
     pauseBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
     stopBtn.disabled = true;
   } else {
-    statusText.textContent = 'System Ready';
+    if (activeCapacity?.availableSlots === 0) {
+      statusText.textContent = `Crawl Capacity Full (${activeCapacity.activeCrawls}/${activeCapacity.maxConcurrentCrawls})`;
+    } else if (activeCapacity) {
+      const slots = activeCapacity.availableSlots;
+      statusText.textContent = `System Ready · ${slots} crawl slot${slots === 1 ? '' : 's'} available`;
+    } else {
+      statusText.textContent = 'System Ready';
+    }
     startBtn.disabled = false;
     pauseBtn.disabled = true;
     pauseBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause';
@@ -1070,6 +1096,8 @@ crawlForm.addEventListener('submit', async (e) => {
       }
       throw parseErr;
     }
+
+    applyCrawlCapacity(data.capacity);
 
     if (data.error) {
       alert(data.error);

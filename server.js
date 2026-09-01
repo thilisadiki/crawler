@@ -10,6 +10,14 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(minimum, parsed)) : fallback;
+}
+
+const MAX_CONCURRENT_CRAWLS = boundedInteger(process.env.MAX_CONCURRENT_CRAWLS, 2, 1, 8);
+const MAX_WORKERS_PER_CRAWL = boundedInteger(process.env.MAX_WORKERS_PER_CRAWL, 1, 1, 3);
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'src', 'public')));
 
@@ -48,11 +56,17 @@ function pruneCrawlerSessions() {
   }
 }
 
-function hasRunningCrawler() {
+function getCrawlCapacity() {
+  let activeCrawls = 0;
   for (const crawler of runningCrawlers) {
-    if (crawler.isRunning) return true;
+    if (crawler.isRunning) activeCrawls++;
   }
-  return false;
+  return {
+    activeCrawls,
+    maxConcurrentCrawls: MAX_CONCURRENT_CRAWLS,
+    availableSlots: Math.max(0, MAX_CONCURRENT_CRAWLS - activeCrawls),
+    maxWorkersPerCrawl: MAX_WORKERS_PER_CRAWL
+  };
 }
 
 function broadcastSSE(sessionId, eventType, data) {
@@ -60,6 +74,15 @@ function broadcastSSE(sessionId, eventType, data) {
   if (record) record.updatedAt = Date.now();
   const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
   sseClients.filter(client => client.sessionId === sessionId).forEach(client => {
+    try {
+      client.res.write(payload);
+    } catch (e) {}
+  });
+}
+
+function broadcastCapacity() {
+  const payload = `event: capacity\ndata: ${JSON.stringify(getCrawlCapacity())}\n\n`;
+  sseClients.forEach(client => {
     try {
       client.res.write(payload);
     } catch (e) {}
@@ -87,7 +110,8 @@ app.get('/api/crawler/stream', (req, res) => {
       stats: crawler.stats,
       queueLength: crawler.queue.length,
       config: crawler.getConfigSummary(),
-      engine: crawler.getEngineStatus()
+      engine: crawler.getEngineStatus(),
+      capacity: getCrawlCapacity()
     })}\n\n`);
   }
 
@@ -104,8 +128,12 @@ app.post('/api/crawler/start', (req, res) => {
     if (existingCrawler?.isRunning) {
       return res.status(400).json({ error: 'A crawl is already running. Please stop or wait for it to finish.' });
     }
-    if (hasRunningCrawler()) {
-      return res.status(409).json({ error: 'Another browser tab is currently running a crawl. This Hostinger deployment allows one cloud-browser crawl at a time.' });
+    const capacity = getCrawlCapacity();
+    if (capacity.activeCrawls >= capacity.maxConcurrentCrawls) {
+      return res.status(429).json({
+        error: `All cloud-browser crawl slots are occupied (${capacity.activeCrawls}/${capacity.maxConcurrentCrawls}). Try again when another crawl finishes.`,
+        capacity
+      });
     }
 
     const {
@@ -113,7 +141,7 @@ app.post('/api/crawler/start', (req, res) => {
       crawlScope = 'domain',
       maxDepth = 3,
       maxPages = 50,
-      concurrency = 1,
+      concurrency: requestedConcurrency = 1,
       customContentSelector = '',
       excludePatterns = [],
       includePatterns = [],
@@ -130,6 +158,10 @@ app.post('/api/crawler/start', (req, res) => {
     }
 
     const cleanProxy = (proxy && typeof proxy === 'string') ? proxy.trim() || null : null;
+    const concurrency = Math.min(
+      MAX_WORKERS_PER_CRAWL,
+      boundedInteger(requestedConcurrency, 1, 1, MAX_WORKERS_PER_CRAWL)
+    );
 
     const crawler = new SiteCrawler({
       seedUrl,
@@ -166,14 +198,24 @@ app.post('/api/crawler/start', (req, res) => {
     crawler.on('error', data => sendCrawlerEvent('error', data));
 
     // Run in background
-    crawler.start()
+    const crawlPromise = crawler.start();
+    broadcastCapacity();
+    crawlPromise
       .catch(err => {
         console.error('Crawler engine error:', err);
         sendCrawlerEvent('error', { message: err.message });
       })
-      .finally(() => runningCrawlers.delete(crawler));
+      .finally(() => {
+        runningCrawlers.delete(crawler);
+        broadcastCapacity();
+      });
 
-    return res.json({ success: true, message: 'Crawl started', config: crawler.getConfigSummary() });
+    return res.json({
+      success: true,
+      message: 'Crawl started',
+      config: crawler.getConfigSummary(),
+      capacity: getCrawlCapacity()
+    });
   } catch (err) {
     console.error('Failed to start crawler:', err);
     return res.status(500).json({ error: err.message });
@@ -255,7 +297,7 @@ app.get('/api/debug/browser', async (req, res) => {
 app.get('/api/crawler/status', (req, res) => {
   const { crawler } = getSessionCrawler(req);
   if (!crawler) {
-    return res.json({ isRunning: false, stats: null, resultsCount: 0, engine: null });
+    return res.json({ isRunning: false, stats: null, resultsCount: 0, engine: null, capacity: getCrawlCapacity() });
   }
   res.json({
     isRunning: crawler.isRunning,
@@ -265,7 +307,8 @@ app.get('/api/crawler/status', (req, res) => {
     queueLength: crawler.queue.length,
     resultsCount: crawler.results.length,
     config: crawler.getConfigSummary(),
-    engine: crawler.getEngineStatus()
+    engine: crawler.getEngineStatus(),
+    capacity: getCrawlCapacity()
   });
 });
 
@@ -335,5 +378,6 @@ app.listen(PORT, () => {
   console.log(`\n======================================================`);
   console.log(`  🕷️ Browser SEO Spider is running!`);
   console.log(`  🔗 Open Dashboard: http://localhost:${PORT}`);
+  console.log(`  ⚙️  Crawl Capacity: ${MAX_CONCURRENT_CRAWLS} simultaneous crawl(s), ${MAX_WORKERS_PER_CRAWL} worker(s) each`);
   console.log(`======================================================\n`);
 });
