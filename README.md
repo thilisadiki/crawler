@@ -201,7 +201,7 @@ The first active crawl launches Chromium. Additional crawls acquire a lease on t
 
 ### Capacity limits
 
-By default, the app permits two simultaneous crawls with one browser worker each. When all slots are occupied, `POST /api/crawler/start` returns HTTP `429` and the dashboard shows the capacity state.
+By default, the app permits three simultaneous crawls with one browser worker each. When all slots are occupied, `POST /api/crawler/start` returns HTTP `429` and the dashboard shows the capacity state.
 
 The limits are controlled by environment variables described below. Raise them gradually after observing memory, CPU, latency, browser restart counts, and target-site rate limiting.
 
@@ -214,7 +214,7 @@ All configuration is optional. The defaults are suitable for a small Hostinger C
 | `PORT` | `3000` | — | Express listen port. Hostinger supplies this automatically. |
 | `CHROMIUM_ENGINE` | `sparticuz` on Linux, `playwright` elsewhere | `sparticuz`, `sparticuz-only`, `playwright` | Select browser engine. Use `sparticuz-only` on Hostinger. |
 | `CHROMIUM_SINGLE_PROCESS` | `false` | `true` / `false` | Re-enables Chromium single-process mode. Leave disabled because it makes renderer failures take down the whole browser. |
-| `MAX_CONCURRENT_CRAWLS` | `2` | 1–8 | Number of simultaneous isolated crawl sessions. |
+| `MAX_CONCURRENT_CRAWLS` | `3` | 1–8 | Number of simultaneous isolated crawl sessions. |
 | `MAX_WORKERS_PER_CRAWL` | `1` | 1–3 | Maximum browser workers within each crawl. |
 | `LINK_CHECK_CONCURRENCY` | `6` | 1–12 | Parallel link status checks per crawl. |
 | `LINK_CHECK_DEADLINE_MS` | `30000` | 5000–120000 | Per-page deadline for link status verification. |
@@ -334,7 +334,7 @@ Set these hPanel environment variables as a safe starting point:
 
 ```text
 CHROMIUM_ENGINE=sparticuz-only
-MAX_CONCURRENT_CRAWLS=2
+MAX_CONCURRENT_CRAWLS=3
 MAX_WORKERS_PER_CRAWL=1
 LINK_CHECK_CONCURRENCY=6
 LINK_CHECK_DEADLINE_MS=30000
