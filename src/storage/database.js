@@ -307,6 +307,29 @@ export class CrawlStorage {
       }))
     };
   }
+
+  async clearAllCrawls() {
+    if (!(await this.initialize()) || !this.pool) {
+      throw new Error('Persistent crawl history is not connected.');
+    }
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[linkCount]] = await connection.query('SELECT COUNT(*) AS total FROM crawl_links');
+      const [[pageCount]] = await connection.query('SELECT COUNT(*) AS total FROM crawl_pages');
+      const [[crawlCount]] = await connection.query('SELECT COUNT(*) AS total FROM crawl_runs');
+      await connection.query('DELETE FROM crawl_links');
+      await connection.query('DELETE FROM crawl_pages');
+      await connection.query('DELETE FROM crawl_runs');
+      await connection.commit();
+      return { crawls: crawlCount.total, pages: pageCount.total, links: linkCount.total };
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
 }
 
 export const crawlStorage = new CrawlStorage();

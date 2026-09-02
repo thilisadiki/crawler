@@ -1,7 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { SiteCrawler } from './src/engine/crawler.js';
 import { Exporter } from './src/engine/exporter.js';
 import { crawlStorage } from './src/storage/database.js';
@@ -22,6 +22,12 @@ const MAX_WORKERS_PER_CRAWL = boundedInteger(process.env.MAX_WORKERS_PER_CRAWL, 
 const LINK_CHECK_CONCURRENCY = boundedInteger(process.env.LINK_CHECK_CONCURRENCY, 6, 1, 12);
 const LINK_CHECK_DEADLINE_MS = boundedInteger(process.env.LINK_CHECK_DEADLINE_MS, 30000, 5000, 120000);
 const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v4';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
+const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
+const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const adminLoginAttempts = new Map();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'src', 'public')));
@@ -35,6 +41,146 @@ const runningCrawlers = new Set();
 let sseClients = [];
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_RETAINED_SESSIONS = 25;
+
+function parseCookies(req) {
+  return Object.fromEntries((req.headers.cookie || '').split(';').flatMap(part => {
+    const separator = part.indexOf('=');
+    if (separator < 1) return [];
+    const name = part.slice(0, separator).trim();
+    const value = part.slice(separator + 1).trim();
+    try {
+      return [[name, decodeURIComponent(value)]];
+    } catch {
+      return [];
+    }
+  }));
+}
+
+function signAdminPayload(payload) {
+  return createHmac('sha256', ADMIN_SESSION_SECRET).update(payload).digest('base64url');
+}
+
+function createAdminSession() {
+  const payload = Buffer.from(JSON.stringify({ exp: Date.now() + ADMIN_SESSION_TTL_MS })).toString('base64url');
+  return `${payload}.${signAdminPayload(payload)}`;
+}
+
+function hasValidAdminSession(req) {
+  if (!ADMIN_PASSWORD || !ADMIN_SESSION_SECRET) return false;
+  const token = parseCookies(req).omnicrawl_admin;
+  if (!token) return false;
+  const [payload, signature, ...extra] = token.split('.');
+  if (!payload || !signature || extra.length) return false;
+  const expected = signAdminPayload(payload);
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(signature);
+  if (expectedBuffer.length !== receivedBuffer.length || !timingSafeEqual(expectedBuffer, receivedBuffer)) return false;
+  try {
+    const { exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return Number.isFinite(exp) && exp > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function isSecureRequest(req) {
+  return req.secure || req.get('x-forwarded-proto') === 'https' || process.env.NODE_ENV === 'production';
+}
+
+function adminCookieOptions(req) {
+  return {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: isSecureRequest(req),
+    path: '/',
+    maxAge: ADMIN_SESSION_TTL_MS
+  };
+}
+
+function requireAdmin(req, res, next) {
+  if (!ADMIN_PASSWORD) return res.status(404).send('Not found');
+  if (!hasValidAdminSession(req)) return res.status(401).json({ error: 'Administrator login required.' });
+  return next();
+}
+
+function getLoginAttempt(req) {
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const existing = adminLoginAttempts.get(key);
+  if (!existing || existing.resetAt <= now) {
+    const attempt = { count: 0, resetAt: now + ADMIN_LOGIN_WINDOW_MS };
+    adminLoginAttempts.set(key, attempt);
+    return { key, attempt };
+  }
+  return { key, attempt: existing };
+}
+
+function passwordsMatch(candidate) {
+  const expectedBuffer = Buffer.from(ADMIN_PASSWORD);
+  const candidateBuffer = Buffer.from(typeof candidate === 'string' ? candidate : '');
+  return expectedBuffer.length === candidateBuffer.length && timingSafeEqual(expectedBuffer, candidateBuffer);
+}
+
+// The history-management screen is intentionally separate from the crawler UI.
+// It is unavailable until an administrator password is configured in the hosting
+// environment, and every data-changing endpoint requires its signed HTTP-only cookie.
+app.get('/admin/login', (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(404).send('Not found');
+  if (hasValidAdminSession(req)) return res.redirect('/admin');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.sendFile(path.join(__dirname, 'src', 'admin', 'login.html'));
+});
+
+app.get('/admin', (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(404).send('Not found');
+  if (!hasValidAdminSession(req)) return res.redirect('/admin/login');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.sendFile(path.join(__dirname, 'src', 'admin', 'index.html'));
+});
+
+app.get('/api/admin/session', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ configured: Boolean(ADMIN_PASSWORD), authenticated: hasValidAdminSession(req) });
+});
+
+app.post('/api/admin/login', (req, res) => {
+  if (!ADMIN_PASSWORD) return res.status(404).json({ error: 'Administrator access is not configured.' });
+  const { key, attempt } = getLoginAttempt(req);
+  if (attempt.count >= ADMIN_LOGIN_MAX_ATTEMPTS) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((attempt.resetAt - Date.now()) / 1000));
+    res.setHeader('Retry-After', retryAfterSeconds);
+    return res.status(429).json({ error: `Too many failed attempts. Try again in ${Math.ceil(retryAfterSeconds / 60)} minute(s).` });
+  }
+  if (!passwordsMatch(req.body?.password)) {
+    attempt.count++;
+    return res.status(401).json({ error: 'Incorrect password.' });
+  }
+  adminLoginAttempts.delete(key);
+  res.setHeader('Cache-Control', 'no-store');
+  res.cookie('omnicrawl_admin', createAdminSession(), adminCookieOptions(req));
+  return res.json({ success: true });
+});
+
+app.post('/api/admin/logout', requireAdmin, (req, res) => {
+  res.clearCookie('omnicrawl_admin', adminCookieOptions(req));
+  res.json({ success: true });
+});
+
+app.post('/api/admin/crawl-history/clear', requireAdmin, async (req, res) => {
+  try {
+    if (runningCrawlers.size > 0) {
+      return res.status(409).json({ error: 'Stop and allow all active crawls to finish saving before clearing history.' });
+    }
+    if (req.body?.confirmation !== 'DELETE ALL') {
+      return res.status(400).json({ error: 'Type DELETE ALL to confirm permanent deletion.' });
+    }
+    const deleted = await crawlStorage.clearAllCrawls();
+    return res.json({ success: true, deleted });
+  } catch (error) {
+    console.error('Failed to clear saved crawl history:', error.message);
+    return res.status(500).json({ error: 'Could not clear saved crawl history. Please try again.' });
+  }
+});
 
 function getSessionId(req) {
   const candidate = req.get('x-crawler-session') || req.query.sessionId || req.body?.sessionId || 'default';

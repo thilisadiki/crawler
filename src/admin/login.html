@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OmniCrawl Administration</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10172a; color: #e8eefb; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; display: grid; place-items: center; margin: 0; padding: 24px; background: radial-gradient(circle at top, #253b70 0, #10172a 45%, #0a1020 100%); }
+    main { width: min(100%, 390px); padding: 34px; border: 1px solid #3a4c79; border-radius: 16px; background: rgba(18, 29, 54, .94); box-shadow: 0 24px 70px #05091499; }
+    h1 { margin: 0 0 8px; font-size: 1.55rem; } p { margin: 0 0 26px; color: #aebcd8; line-height: 1.55; }
+    label { display: block; margin-bottom: 8px; color: #cdd9f0; font-size: .9rem; font-weight: 600; }
+    input { width: 100%; padding: 13px; border: 1px solid #4b5e8e; border-radius: 8px; background: #0e1830; color: #fff; font: inherit; }
+    input:focus { outline: 2px solid #7da4ff; outline-offset: 2px; } button { width: 100%; margin-top: 18px; padding: 13px; border: 0; border-radius: 8px; background: #4178f2; color: white; cursor: pointer; font: 700 1rem inherit; }
+    button:hover { background: #3066da; } button:disabled { opacity: .6; cursor: wait; } #message { min-height: 22px; margin-top: 16px; color: #ffabb3; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Administration</h1>
+    <p>Sign in to manage saved crawl history.</p>
+    <form id="loginForm">
+      <label for="password">Administrator password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+      <button id="submitButton" type="submit">Sign in</button>
+      <div id="message" role="alert"></div>
+    </form>
+  </main>
+  <script>
+    const form = document.getElementById('loginForm');
+    const password = document.getElementById('password');
+    const button = document.getElementById('submitButton');
+    const message = document.getElementById('message');
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      button.disabled = true;
+      message.textContent = '';
+      try {
+        const response = await fetch('/api/admin/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: password.value })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not sign in.');
+        window.location.assign('/admin');
+      } catch (error) {
+        password.value = '';
+        password.focus();
+        message.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

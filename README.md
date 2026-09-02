@@ -235,6 +235,8 @@ All configuration is optional. The defaults are suitable for a small Hostinger C
 | `DB_NAME` | — | — | MySQL database name. |
 | `DB_USER` | — | — | MySQL database user. |
 | `DB_PASSWORD` | — | — | MySQL database password. Keep this only in hosting environment variables. |
+| `ADMIN_PASSWORD` | — | — | Enables the protected `/admin` history-management screen. Use a long, unique password and set it only in hPanel. |
+| `ADMIN_SESSION_SECRET` | `ADMIN_PASSWORD` | — | Optional separate, long random value used to sign administrator sessions. Recommended in production. |
 
 Recommended starting capacity:
 
@@ -359,6 +361,10 @@ LINK_CHECK_DEADLINE_MS=30000
 ```
 
 To enable saved crawl history, add `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` for a MySQL database in hPanel. OmniCrawl creates its own three tables on startup. Database credentials must never be committed to Git.
+
+To clear saved history without phpMyAdmin, set `ADMIN_PASSWORD` in hPanel **Environment variables**, then deploy or restart the application. Visit `/admin` and sign in. The administration page requires typing `DELETE ALL` before it enables the permanent **Clear all saved crawl history** action. It clears only this app's saved crawl history; it does not drop the MySQL tables or change live crawler settings.
+
+For stronger session signing, also set `ADMIN_SESSION_SECRET` to a separate long random value. The admin session is an HTTP-only, same-site cookie that expires after eight hours. Login attempts are rate-limited to five failures per 15 minutes.
 
 Use [HOSTINGER_DEPLOY.md](HOSTINGER_DEPLOY.md) for Hostinger-specific diagnostics, capacity guidance, and post-deployment checks.
 
