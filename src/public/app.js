@@ -167,10 +167,31 @@ crawlScopeSelect.addEventListener('change', () => {
 
 // SSE Connection & Polling Fallback
 let statusPollingInterval = null;
+let statusPollInFlight = false;
+let crawlerEventSource = null;
+let eventSourceReconnectTimer = null;
+
+function prepareNewCrawlUI() {
+  crawlResults = [];
+  allDiscoveredLinks = [];
+  activeEngine = { mode: 'initializing', provider: null, error: null };
+  accumulatedElapsedMs = 0;
+  sessionStartTime = null;
+  renderCurrentViews();
+  updateUIStatus('running');
+  startTimer();
+}
 
 function initEventSource() {
+  if (crawlerEventSource && crawlerEventSource.readyState !== EventSource.CLOSED) return;
+  if (eventSourceReconnectTimer) {
+    clearTimeout(eventSourceReconnectTimer);
+    eventSourceReconnectTimer = null;
+  }
+
   try {
     const evtSource = new EventSource(crawlerApiUrl('/api/crawler/stream'));
+    crawlerEventSource = evtSource;
 
     evtSource.addEventListener('status', async (e) => {
       const data = JSON.parse(e.data);
@@ -193,14 +214,7 @@ function initEventSource() {
     });
 
     evtSource.addEventListener('started', () => {
-      crawlResults = [];
-      allDiscoveredLinks = [];
-      activeEngine = { mode: 'initializing', provider: null, error: null };
-      accumulatedElapsedMs = 0;
-      sessionStartTime = null;
-      renderCurrentViews();
-      updateUIStatus('running');
-      startTimer();
+      prepareNewCrawlUI();
       startPolling();
     });
 
@@ -286,6 +300,13 @@ function initEventSource() {
     evtSource.addEventListener('error', (e) => {
       // SSE reconnecting or buffered by cloud proxy; polling fallback handles this
       startPolling();
+      if (evtSource.readyState === EventSource.CLOSED && crawlerEventSource === evtSource && !eventSourceReconnectTimer) {
+        eventSourceReconnectTimer = setTimeout(() => {
+          eventSourceReconnectTimer = null;
+          if (crawlerEventSource === evtSource) crawlerEventSource = null;
+          initEventSource();
+        }, 1000);
+      }
     });
   } catch (err) {
     console.warn('SSE not supported or blocked, relying on polling fallback:', err);
@@ -296,57 +317,66 @@ function initEventSource() {
 // Background Polling Fallback (ensures cloud proxies/Nginx never stall the UI)
 function startPolling() {
   if (statusPollingInterval) return;
-  statusPollingInterval = setInterval(async () => {
-    try {
-      const statusRes = await crawlerFetch('/api/crawler/status');
-      if (!statusRes.ok) return;
-      const statusData = await statusRes.json();
-      activeEngine = statusData.engine || activeEngine;
-      applyCrawlCapacity(statusData.capacity);
+  void pollCrawlerStatus();
+  statusPollingInterval = setInterval(pollCrawlerStatus, 1500);
+}
 
-      if (statusData.stats) {
-        updateStats(statusData.stats, statusData.queueLength);
-      }
+async function pollCrawlerStatus() {
+  if (statusPollInFlight) return;
+  statusPollInFlight = true;
+  try {
+    const statusRes = await crawlerFetch('/api/crawler/status');
+    if (!statusRes.ok) return;
+    const statusData = await statusRes.json();
+    activeEngine = statusData.engine || activeEngine;
+    applyCrawlCapacity(statusData.capacity);
 
-      if (statusData.isRunning) {
-        if (statusData.isStopping) {
-          updateUIStatus('stopping');
-          stopTimer(true);
-        } else if (statusData.isPaused) {
-          updateUIStatus('paused');
-          stopTimer(true);
-        } else {
-          updateUIStatus('running');
-          startTimer();
-        }
-        
-        // Fetch incremental results
-        const resList = await crawlerFetch('/api/crawler/results');
-        if (resList.ok) {
-          const { results } = await resList.json();
-          if (results && results.length > crawlResults.length) {
-            crawlResults = results;
-            
-            // Re-aggregate links
-            allDiscoveredLinks = [];
-            crawlResults.forEach(r => {
-              if (r.links) {
-                r.links.forEach(l => {
-                  allDiscoveredLinks.push({ ...l, sourceUrl: r.url });
-                });
-              }
-            });
-            renderCurrentViews();
-          }
-        }
-      } else if (!statusData.isRunning && crawlResults.length > 0 && (statusBadge.classList.contains('running') || statusBadge.classList.contains('paused'))) {
-        updateUIStatus('completed');
+    if (statusData.stats) {
+      updateStats(statusData.stats, statusData.queueLength);
+    }
+
+    if (statusData.isRunning) {
+      if (statusData.isStopping) {
+        updateUIStatus('stopping');
         stopTimer(true);
-        stopPolling();
-        renderCurrentViews();
+      } else if (statusData.isPaused) {
+        updateUIStatus('paused');
+        stopTimer(true);
+      } else {
+        updateUIStatus('running');
+        startTimer();
       }
-    } catch (e) {}
-  }, 1500);
+
+      // Fetch incremental results even when the SSE stream is unavailable.
+      const resList = await crawlerFetch('/api/crawler/results');
+      if (resList.ok) {
+        const { results } = await resList.json();
+        if (results && results.length > crawlResults.length) {
+          crawlResults = results;
+
+          // Re-aggregate links
+          allDiscoveredLinks = [];
+          crawlResults.forEach(r => {
+            if (r.links) {
+              r.links.forEach(l => {
+                allDiscoveredLinks.push({ ...l, sourceUrl: r.url });
+              });
+            }
+          });
+          renderCurrentViews();
+        }
+      }
+    } else if (!statusData.isRunning && crawlResults.length > 0 && (statusBadge.classList.contains('running') || statusBadge.classList.contains('paused') || statusBadge.classList.contains('stopping'))) {
+      updateUIStatus('completed');
+      stopTimer(true);
+      stopPolling();
+      renderCurrentViews();
+    }
+  } catch (e) {
+    // The next scheduled poll retries transient proxy/network failures.
+  } finally {
+    statusPollInFlight = false;
+  }
 }
 
 async function restoreSessionResults() {
@@ -1116,6 +1146,13 @@ crawlForm.addEventListener('submit', async (e) => {
     if (data.error) {
       alert(data.error);
       updateUIStatus('ready');
+    } else {
+      prepareNewCrawlUI();
+      // Do not rely solely on SSE after a reset: Hostinger proxies can leave an
+      // existing stream open but no longer forward page events to this tab.
+      initEventSource();
+      startPolling();
+      await pollCrawlerStatus();
     }
   } catch (err) {
     alert('Failed to start crawler: ' + err.message);
@@ -1149,7 +1186,7 @@ stopBtn.addEventListener('click', async () => {
     await crawlerFetch('/api/crawler/stop', { method: 'POST' });
   } catch (err) {
     console.error('Abort failed:', err);
-    await fetchStatus();
+    await restoreSessionState();
   }
 });
 
