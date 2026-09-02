@@ -33,6 +33,7 @@ The dashboard is designed for on-demand audits. Each browser tab receives its ow
 - Shows real-time progress through Server-Sent Events (SSE), with polling as a fallback.
 - Exports pages, links, and content-area data as CSV or an Excel workbook with a summary, link inventory, and one sheet per crawled page.
 - Supports multiple simultaneous user sessions while keeping crawl state isolated per browser tab.
+- Persists crawl runs, page results, links, and extracted text to MySQL when database credentials are configured.
 
 ## Architecture
 
@@ -63,6 +64,7 @@ Express server
 | `src/engine/robots.js` | `robots.txt` parser and origin fetcher |
 | `src/engine/geoPresets.js` | Regional browser locale, timezone, coordinates, and request-header presets |
 | `src/engine/exporter.js` | CSV and XLSX report generation |
+| `src/storage/database.js` | Optional MySQL schema, persistence, and saved-crawl retrieval |
 | `src/public/` | Dashboard HTML, JavaScript, and styles |
 
 ## Quick start
@@ -228,6 +230,11 @@ All configuration is optional. The defaults are suitable for a small Hostinger C
 | `LINK_CHECK_CONCURRENCY` | `6` | 1–12 | Parallel link status checks per crawl. |
 | `LINK_CHECK_DEADLINE_MS` | `30000` | 5000–120000 | Per-page deadline for link status verification. |
 | `APP_RELEASE` | `concurrent-crawls-v4` | — | Optional runtime release label returned by the status API. |
+| `DB_HOST` | — | — | MySQL host; enables durable crawl history when all `DB_*` values are present. |
+| `DB_PORT` | `3306` | — | MySQL port. |
+| `DB_NAME` | — | — | MySQL database name. |
+| `DB_USER` | — | — | MySQL database user. |
+| `DB_PASSWORD` | — | — | MySQL database password. Keep this only in hosting environment variables. |
 
 Recommended starting capacity:
 
@@ -297,6 +304,8 @@ Responses:
 | `GET /api/crawler/status?sessionId=<id>` | Session status, statistics, engine mode, runtime release, and global capacity. |
 | `GET /api/crawler/results?sessionId=<id>` | Crawled page results. |
 | `GET /api/crawler/links?sessionId=<id>` | Aggregated link records. |
+| `GET /api/crawler/history?limit=25` | Saved crawls from MySQL; survives restarts and deployments. |
+| `GET /api/crawler/history/<crawlId>` | One saved crawl with its page results and links. |
 | `GET /api/crawler/stream?sessionId=<id>` | SSE stream for live UI updates. |
 | `GET /api/debug/browser` | Launch diagnostic for Chromium. Do not use it as a frequent production health check during busy crawls. |
 
@@ -348,6 +357,8 @@ MAX_WORKERS_PER_CRAWL=1
 LINK_CHECK_CONCURRENCY=6
 LINK_CHECK_DEADLINE_MS=30000
 ```
+
+To enable saved crawl history, add `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` for a MySQL database in hPanel. OmniCrawl creates its own three tables on startup. Database credentials must never be committed to Git.
 
 Use [HOSTINGER_DEPLOY.md](HOSTINGER_DEPLOY.md) for Hostinger-specific diagnostics, capacity guidance, and post-deployment checks.
 
@@ -403,7 +414,7 @@ Region presets adjust browser locale, timezone, geolocation, and request headers
 
 ### Results disappeared
 
-Results are in memory only. They are lost on deployment, process restart, or session expiration. Export completed audits promptly. Persistent audit history requires a database or object storage integration.
+The current tab's live results are in memory and can disappear on deployment, process restart, or session expiration. When the `DB_*` variables are configured, completed crawl history remains available through `/api/crawler/history` after those events. Export completed audits promptly for offline records.
 
 ## Operational limits and security
 

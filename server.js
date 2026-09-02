@@ -1,8 +1,10 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import { SiteCrawler } from './src/engine/crawler.js';
 import { Exporter } from './src/engine/exporter.js';
+import { crawlStorage } from './src/storage/database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +25,10 @@ const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v4';
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'src', 'public')));
+
+// Database persistence is optional locally, but enabled automatically when the
+// Hostinger database environment variables are configured.
+crawlStorage.initialize().catch(() => {});
 
 const crawlerSessions = new Map();
 const runningCrawlers = new Set();
@@ -127,7 +133,7 @@ app.get('/api/crawler/stream', (req, res) => {
 });
 
 // Start Crawl
-app.post('/api/crawler/start', (req, res) => {
+app.post('/api/crawler/start', async (req, res) => {
   try {
     pruneCrawlerSessions();
     const { sessionId, crawler: existingCrawler } = getSessionCrawler(req);
@@ -187,7 +193,25 @@ app.post('/api/crawler/start', (req, res) => {
       linkCheckConcurrency: LINK_CHECK_CONCURRENCY,
       linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
     });
-    crawlerSessions.set(sessionId, { crawler, updatedAt: Date.now() });
+    const crawlId = randomUUID();
+    let persistenceChain = Promise.resolve();
+    const queuePersistence = (task) => {
+      persistenceChain = persistenceChain
+        .then(task)
+        .catch(error => console.error(`Failed to persist crawl ${crawlId}:`, error.message));
+      return persistenceChain;
+    };
+
+    if (await crawlStorage.initialize()) {
+      await queuePersistence(() => crawlStorage.createCrawl({
+        id: crawlId,
+        sessionId,
+        seedUrl,
+        config: crawler.getConfigSummary()
+      }));
+    }
+
+    crawlerSessions.set(sessionId, { crawler, crawlId, updatedAt: Date.now() });
     runningCrawlers.add(crawler);
     const sendCrawlerEvent = (eventType, data) => {
       if (crawlerSessions.get(sessionId)?.crawler === crawler) {
@@ -196,14 +220,41 @@ app.post('/api/crawler/start', (req, res) => {
     };
 
     // Attach event handlers
-    crawler.on('started', data => sendCrawlerEvent('started', data));
+    crawler.on('started', data => {
+      sendCrawlerEvent('started', data);
+      queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
+        status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus(), started: true
+      }));
+    });
     crawler.on('engineSelected', data => sendCrawlerEvent('engineSelected', data));
-    crawler.on('pageCrawled', data => sendCrawlerEvent('pageCrawled', data));
-    crawler.on('paused', () => sendCrawlerEvent('paused', {}));
-    crawler.on('resumed', () => sendCrawlerEvent('resumed', {}));
-    crawler.on('stopping', () => sendCrawlerEvent('stopping', {}));
-    crawler.on('stopped', () => sendCrawlerEvent('stopped', {}));
-    crawler.on('completed', data => sendCrawlerEvent('completed', data));
+    crawler.on('pageCrawled', data => {
+      sendCrawlerEvent('pageCrawled', data);
+      queuePersistence(() => crawlStorage.savePage(crawlId, data.result));
+    });
+    crawler.on('paused', () => {
+      sendCrawlerEvent('paused', {});
+      queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'paused', stats: crawler.stats, engine: crawler.getEngineStatus() }));
+    });
+    crawler.on('resumed', () => {
+      sendCrawlerEvent('resumed', {});
+      queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus() }));
+    });
+    crawler.on('stopping', () => {
+      sendCrawlerEvent('stopping', {});
+      queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'stopping', stats: crawler.stats, engine: crawler.getEngineStatus() }));
+    });
+    crawler.on('stopped', data => {
+      sendCrawlerEvent('stopped', data);
+      queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
+        status: 'stopped', stats: data.stats, engine: data.engine, completed: true
+      }));
+    });
+    crawler.on('completed', data => {
+      sendCrawlerEvent('completed', data);
+      queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
+        status: 'completed', stats: data.stats, engine: data.engine, completed: true
+      }));
+    });
     crawler.on('error', data => sendCrawlerEvent('error', data));
 
     // Run in background
@@ -214,7 +265,8 @@ app.post('/api/crawler/start', (req, res) => {
         console.error('Crawler engine error:', err);
         sendCrawlerEvent('error', { message: err.message });
       })
-      .finally(() => {
+      .finally(async () => {
+        await persistenceChain;
         runningCrawlers.delete(crawler);
         broadcastCapacity();
       });
@@ -222,6 +274,7 @@ app.post('/api/crawler/start', (req, res) => {
     return res.json({
       success: true,
       message: 'Crawl started',
+      crawlId,
       config: crawler.getConfigSummary(),
       capacity: getCrawlCapacity()
     });
@@ -306,7 +359,7 @@ app.get('/api/debug/browser', async (req, res) => {
 app.get('/api/crawler/status', (req, res) => {
   const { crawler } = getSessionCrawler(req);
   if (!crawler) {
-    return res.json({ release: APP_RELEASE, isRunning: false, stats: null, resultsCount: 0, engine: null, capacity: getCrawlCapacity() });
+    return res.json({ release: APP_RELEASE, isRunning: false, stats: null, resultsCount: 0, engine: null, capacity: getCrawlCapacity(), storage: crawlStorage.getStatus() });
   }
   res.json({
     release: APP_RELEASE,
@@ -319,7 +372,8 @@ app.get('/api/crawler/status', (req, res) => {
     resultsCount: crawler.results.length,
     config: crawler.getConfigSummary(),
     engine: crawler.getEngineStatus(),
-    capacity: getCrawlCapacity()
+    capacity: getCrawlCapacity(),
+    storage: crawlStorage.getStatus()
   });
 });
 
@@ -333,6 +387,26 @@ app.get('/api/crawler/links', (req, res) => {
   const { crawler } = getSessionCrawler(req);
   if (!crawler) return res.json({ links: [] });
   res.json({ links: crawler.allLinks });
+});
+
+// Persistent crawl history. These routes remain available after a deployment or process restart.
+app.get('/api/crawler/history', async (req, res) => {
+  try {
+    const crawls = await crawlStorage.listCrawls(req.query.limit);
+    res.json({ storage: crawlStorage.getStatus(), crawls });
+  } catch (error) {
+    res.status(500).json({ error: error.message, storage: crawlStorage.getStatus() });
+  }
+});
+
+app.get('/api/crawler/history/:crawlId', async (req, res) => {
+  try {
+    const history = await crawlStorage.getCrawl(req.params.crawlId);
+    if (!history) return res.status(404).json({ error: 'Saved crawl not found.' });
+    res.json(history);
+  } catch (error) {
+    res.status(500).json({ error: error.message, storage: crawlStorage.getStatus() });
+  }
 });
 
 // Export Endpoints
