@@ -82,6 +82,8 @@ export class SiteCrawler extends EventEmitter {
     this.isRunning = false;
     this.isPaused = false;
     this.isCancelled = false;
+    this.abortController = null;
+    this.activePageContexts = new Set();
     this.queue = [];
     this.visited = new Set();
     this.queued = new Set();
@@ -138,6 +140,7 @@ export class SiteCrawler extends EventEmitter {
     this.isRunning = true;
     this.isCancelled = false;
     this.isPaused = false;
+    this.abortController = new AbortController();
     this.stats.startTime = Date.now();
 
     const normalizedSeed = Extractor.normalizeUrl(this.seedUrl, this.seedUrl);
@@ -180,7 +183,9 @@ export class SiteCrawler extends EventEmitter {
     }
 
     try {
-      await this.runWorkerPool();
+      if (!this.isCancelled) {
+        await this.runWorkerPool();
+      }
     } catch (err) {
       console.error('Crawler execution error:', err);
       this.lastError = err.message;
@@ -191,7 +196,7 @@ export class SiteCrawler extends EventEmitter {
       this.isRunning = false;
       // Always close the browser, including when a page-level error changed the engine mode.
       await this.browserManager.close().catch(() => {});
-      this.emit('completed', {
+      this.emit(this.isCancelled ? 'stopped' : 'completed', {
         stats: this.stats,
         resultsCount: this.results.length,
         engine: this.getEngineStatus()
@@ -232,7 +237,7 @@ export class SiteCrawler extends EventEmitter {
       }
 
       if (this.delayBetweenRequestsMs > 0 && this.queue.length > 0) {
-        await new Promise(r => setTimeout(r, this.delayBetweenRequestsMs));
+        await this.waitForDelay(this.delayBetweenRequestsMs);
       }
     }
   }
@@ -288,14 +293,17 @@ export class SiteCrawler extends EventEmitter {
       const response = await fetch(url, {
         headers,
         redirect: 'follow',
-        signal: AbortSignal.timeout(this.pageTimeoutMs)
+        signal: this.getAbortSignal(this.pageTimeoutMs)
       });
+
+      if (this.isCancellationRequested()) return;
 
       crawlResult.statusCode = response.status;
       crawlResult.statusText = response.statusText;
       crawlResult.responseTimeMs = Date.now() - pageStartTime;
 
       const html = await response.text();
+      if (this.isCancellationRequested()) return;
       const extracted = Extractor.extractFromHtml(html, response.url || url, this.baseOrigin, {
         customSelector: this.customContentSelector,
         cheerio
@@ -309,6 +317,7 @@ export class SiteCrawler extends EventEmitter {
       if (extracted.links && extracted.links.length > 0) {
         await this.checkLinkStatuses(extracted.links);
       }
+      if (this.isCancellationRequested()) return;
 
       // Classify and check discovered links
       const internalLinks = [];
@@ -357,12 +366,15 @@ export class SiteCrawler extends EventEmitter {
         }
       }
     } catch (err) {
+      if (this.isCancellationRequested()) return;
       httpFailed = true;
       crawlResult.statusCode = crawlResult.statusCode === 200 ? 500 : (crawlResult.statusCode || 500);
       crawlResult.statusText = err.name || 'Crawl Error';
       crawlResult.error = err.message;
       this.stats.errorsCount++;
     }
+
+    if (this.isCancellationRequested()) return;
 
     if (browserFailure && !httpFailed) {
       crawlResult.error = `Browser rendering failed; Direct DOM fallback may not include client-rendered content: ${browserFailure.message}`;
@@ -416,6 +428,7 @@ export class SiteCrawler extends EventEmitter {
 
     try {
       pageContext = await this.createPageContextWithTimeout();
+      if (this.isCancellationRequested()) return;
       page = pageContext.page;
       page.setDefaultTimeout(this.pageTimeoutMs);
 
@@ -426,8 +439,11 @@ export class SiteCrawler extends EventEmitter {
           timeout: this.pageTimeoutMs
         });
       } catch (navErr) {
+        if (this.isCancellationRequested()) throw navErr;
         mainResponse = await page.goto(url, { waitUntil: 'load', timeout: this.pageTimeoutMs }).catch(() => null);
       }
+
+      if (this.isCancellationRequested()) return;
 
       if (mainResponse) {
         crawlResult.statusCode = mainResponse.status();
@@ -448,16 +464,19 @@ export class SiteCrawler extends EventEmitter {
         return document.querySelectorAll('a[href]').length > 0 || bodyText.length > 200;
       }, null, { timeout: 5000 }).catch(() => {});
       await page.waitForTimeout(500);
+      if (this.isCancellationRequested()) return;
 
       // Auto-scroll for lazy loaded widgets
       if (this.autoScroll) {
         await this.browserManager.autoScroll(page, 2000);
       }
+      if (this.isCancellationRequested()) return;
 
       // Extract all page metadata, links, and custom content
       const extracted = await Extractor.extractPageData(page, url, this.baseOrigin, {
         customSelector: this.customContentSelector
       });
+      if (this.isCancellationRequested()) return;
 
       // The page is no longer needed once its DOM has been extracted. Releasing it
       // before link checks keeps Chromium memory stable on constrained cloud hosts.
@@ -469,6 +488,7 @@ export class SiteCrawler extends EventEmitter {
       if (extracted.links && extracted.links.length > 0) {
         await this.checkLinkStatuses(extracted.links);
       }
+      if (this.isCancellationRequested()) return;
 
       crawlResult.title = extracted.title;
       crawlResult.metaDescription = extracted.metaDescription;
@@ -542,8 +562,10 @@ export class SiteCrawler extends EventEmitter {
         pageContext = null;
       }
 
+      if (this.isCancellationRequested()) return;
+
       const browserError = err instanceof Error ? err : new Error(String(err));
-      const canRestart = retryAttempt < 1 && this.isBrowserDisconnectError(browserError);
+      const canRestart = !this.isCancellationRequested() && retryAttempt < 1 && this.isBrowserDisconnectError(browserError);
 
       if (canRestart) {
         console.warn(`Chromium became unavailable while rendering ${url}. Restarting it and retrying this URL once.`);
@@ -600,8 +622,10 @@ export class SiteCrawler extends EventEmitter {
   async createPageContextWithTimeout() {
     let timedOut = false;
     let timeoutId = null;
+    let removeAbortListener = null;
     const contextPromise = this.browserManager.createPageContext().then(async pageContext => {
-      if (timedOut) await this.closePageContext(pageContext);
+      this.activePageContexts.add(pageContext);
+      if (timedOut || this.isCancellationRequested()) await this.closePageContext(pageContext);
       return pageContext;
     });
 
@@ -613,29 +637,54 @@ export class SiteCrawler extends EventEmitter {
             timedOut = true;
             reject(new Error(`Browser context creation timed out after ${this.pageTimeoutMs}ms`));
           }, this.pageTimeoutMs);
+        }),
+        new Promise((resolve, reject) => {
+          const signal = this.abortController?.signal;
+          if (!signal) return;
+          if (signal.aborted) return reject(new Error('Crawl cancelled while creating browser context'));
+          const onAbort = () => reject(new Error('Crawl cancelled while creating browser context'));
+          signal.addEventListener('abort', onAbort, { once: true });
+          removeAbortListener = () => signal.removeEventListener('abort', onAbort);
         })
       ]);
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      if (removeAbortListener) removeAbortListener();
     }
   }
 
   async checkLinkStatuses(links) {
     let timeoutId = null;
+    let removeAbortListener = null;
     const completed = await Promise.race([
-      this.statusChecker.checkLinksInParallel(links, this.linkCheckConcurrency, this.linkCheckDeadlineMs).then(() => true),
+      this.statusChecker.checkLinksInParallel(
+        links,
+        this.linkCheckConcurrency,
+        this.linkCheckDeadlineMs,
+        this.abortController?.signal
+      ).then(() => true),
       new Promise(resolve => {
         timeoutId = setTimeout(() => resolve(false), this.linkCheckDeadlineMs);
+      }),
+      new Promise(resolve => {
+        const signal = this.abortController?.signal;
+        if (!signal) return resolve(false);
+        if (signal.aborted) return resolve(false);
+        const onAbort = () => resolve(false);
+        signal.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener('abort', onAbort);
       })
     ]);
     if (timeoutId) clearTimeout(timeoutId);
-    if (!completed) {
+    if (removeAbortListener) removeAbortListener();
+    if (!completed && !this.isCancellationRequested()) {
       console.warn(`Link verification reached its ${this.linkCheckDeadlineMs}ms page deadline; continuing the crawl.`);
     }
   }
 
   async closePageContext(pageContext) {
     if (!pageContext?.context) return;
+    this.activePageContexts.delete(pageContext);
     let timeoutId = null;
     await Promise.race([
       pageContext.context.close().catch(() => {}),
@@ -732,9 +781,41 @@ export class SiteCrawler extends EventEmitter {
   }
 
   stop() {
+    if (!this.isRunning || this.isCancelled) return;
     this.isCancelled = true;
+    this.isPaused = false;
     this.queue = [];
-    this.emit('stopped');
+    this.abortController?.abort();
+    for (const pageContext of [...this.activePageContexts]) {
+      this.closePageContext(pageContext).catch(() => {});
+    }
+    this.emit('stopping');
+  }
+
+  isCancellationRequested() {
+    return this.isCancelled || Boolean(this.abortController?.signal.aborted);
+  }
+
+  getAbortSignal(timeoutMs) {
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    return this.abortController?.signal
+      ? AbortSignal.any([this.abortController.signal, timeoutSignal])
+      : timeoutSignal;
+  }
+
+  async waitForDelay(delayMs) {
+    const signal = this.abortController?.signal;
+    if (!signal || signal.aborted || delayMs <= 0) return;
+    await new Promise(resolve => {
+      const timeoutId = setTimeout(done, delayMs);
+      const onAbort = () => done();
+      function done() {
+        clearTimeout(timeoutId);
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
   getConfigSummary() {

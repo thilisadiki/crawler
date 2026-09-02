@@ -278,7 +278,7 @@ Responses:
 | --- | --- |
 | `POST /api/crawler/pause?sessionId=<id>` | Pauses a running crawl after the current work completes. |
 | `POST /api/crawler/resume?sessionId=<id>` | Resumes a paused crawl. |
-| `POST /api/crawler/stop?sessionId=<id>` | Stops queueing further URLs and lets the active operation unwind. |
+| `POST /api/crawler/stop?sessionId=<id>` | Cancels queued work, active HTTP/link requests, and the current browser page. The dashboard shows **Stopping…** until cleanup is complete and the crawl slot is released. |
 | `POST /api/crawler/reset?sessionId=<id>` | Stops the session if needed and removes its retained results. |
 
 ### Read routes
@@ -299,7 +299,7 @@ Responses:
 | `started` | A crawl started. |
 | `engineSelected` | Browser/direct-DOM engine state changed. |
 | `pageCrawled` | One result was collected. |
-| `paused`, `resumed`, `stopped`, `completed`, `reset` | Session lifecycle changes. |
+| `paused`, `resumed`, `stopping`, `stopped`, `completed`, `reset` | Session lifecycle changes. `stopping` means active browser/network work is being cancelled; `stopped` is emitted after cleanup completes. |
 | `error` | Crawl-level error. |
 | `capacity` | Global crawl capacity changed. |
 

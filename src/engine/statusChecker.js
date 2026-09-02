@@ -11,8 +11,9 @@ export class LinkStatusChecker {
   /**
    * Check status code for a single URL with cache and fallback
    */
-  async checkUrlStatus(url) {
+  async checkUrlStatus(url, cancellationSignal = null) {
     if (!url) return 400;
+    if (cancellationSignal?.aborted) return undefined;
 
     // Handle non-HTTP schemas
     if (url.startsWith('mailto:') || url.startsWith('tel:')) return 200;
@@ -58,45 +59,56 @@ export class LinkStatusChecker {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+      const signal = cancellationSignal ? AbortSignal.any([controller.signal, cancellationSignal]) : controller.signal;
 
-      const res = await fetch(url, {
-        method: 'HEAD',
-        signal: controller.signal,
-        headers: requestHeaders,
-        redirect: 'follow'
-      });
-      clearTimeout(timeoutId);
-
-      status = res.status;
+      try {
+        const res = await fetch(url, {
+          method: 'HEAD',
+          signal,
+          headers: requestHeaders,
+          redirect: 'follow'
+        });
+        status = res.status;
+      } finally {
+        clearTimeout(timeoutId);
+      }
     } catch (headErr) {
       // Ignore and fallback to GET
     }
+
+    if (cancellationSignal?.aborted) return undefined;
 
     // Attempt 2: If HEAD was 405 (Method Not Allowed), 403, or failed, fallback to GET
     if (!status || status === 405 || status === 403) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+        const signal = cancellationSignal ? AbortSignal.any([controller.signal, cancellationSignal]) : controller.signal;
 
-        const res = await fetch(url, {
-          method: 'GET',
-          signal: controller.signal,
-          headers: {
-            ...requestHeaders,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-          },
-          redirect: 'follow'
-        });
-        clearTimeout(timeoutId);
+        try {
+          const res = await fetch(url, {
+            method: 'GET',
+            signal,
+            headers: {
+              ...requestHeaders,
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            },
+            redirect: 'follow'
+          });
 
-        status = res.status;
-        if (res.body && res.body.cancel) {
-          res.body.cancel().catch(() => {});
+          status = res.status;
+          if (res.body && res.body.cancel) {
+            res.body.cancel().catch(() => {});
+          }
+        } finally {
+          clearTimeout(timeoutId);
         }
       } catch (getErr) {
         status = status || 500;
       }
     }
+
+    if (cancellationSignal?.aborted) return undefined;
 
     const finalStatus = status || 500;
     this.cache.set(url, finalStatus);
@@ -106,20 +118,23 @@ export class LinkStatusChecker {
   /**
    * Check an array of link objects in parallel with concurrency limiting
    */
-  async checkLinksInParallel(links, maxConcurrency = 10, deadlineMs = 0) {
+  async checkLinksInParallel(links, maxConcurrency = 10, deadlineMs = 0, cancellationSignal = null) {
     const queue = [...links];
     const workers = [];
     const deadlineAt = deadlineMs > 0 ? Date.now() + deadlineMs : 0;
 
     const worker = async () => {
       while (queue.length > 0) {
+        if (cancellationSignal?.aborted) break;
         if (deadlineAt && Date.now() >= deadlineAt) break;
         const link = queue.shift();
         if (!link || link.statusCode !== undefined) continue;
 
         try {
-          link.statusCode = await this.checkUrlStatus(link.url);
+          const statusCode = await this.checkUrlStatus(link.url, cancellationSignal);
+          if (statusCode !== undefined) link.statusCode = statusCode;
         } catch (e) {
+          if (cancellationSignal?.aborted) break;
           link.statusCode = 500;
         }
       }

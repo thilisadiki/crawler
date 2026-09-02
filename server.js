@@ -112,6 +112,7 @@ app.get('/api/crawler/stream', (req, res) => {
     res.write(`event: status\ndata: ${JSON.stringify({
       isRunning: crawler.isRunning,
       isPaused: crawler.isPaused,
+      isStopping: crawler.isCancelled,
       stats: crawler.stats,
       queueLength: crawler.queue.length,
       config: crawler.getConfigSummary(),
@@ -200,6 +201,7 @@ app.post('/api/crawler/start', (req, res) => {
     crawler.on('pageCrawled', data => sendCrawlerEvent('pageCrawled', data));
     crawler.on('paused', () => sendCrawlerEvent('paused', {}));
     crawler.on('resumed', () => sendCrawlerEvent('resumed', {}));
+    crawler.on('stopping', () => sendCrawlerEvent('stopping', {}));
     crawler.on('stopped', () => sendCrawlerEvent('stopped', {}));
     crawler.on('completed', data => sendCrawlerEvent('completed', data));
     crawler.on('error', data => sendCrawlerEvent('error', data));
@@ -252,7 +254,7 @@ app.post('/api/crawler/stop', (req, res) => {
   const { crawler } = getSessionCrawler(req);
   if (crawler?.isRunning) {
     crawler.stop();
-    return res.json({ success: true, message: 'Crawl stopped' });
+    return res.json({ success: true, message: 'Crawl cancellation requested' });
   }
   res.status(400).json({ error: 'No active crawl to stop.' });
 });
@@ -310,6 +312,7 @@ app.get('/api/crawler/status', (req, res) => {
     release: APP_RELEASE,
     isRunning: crawler.isRunning,
     isPaused: crawler.isPaused,
+    isStopping: crawler.isCancelled,
     stats: crawler.stats,
     lastError: crawler.lastError || null,
     queueLength: crawler.queue.length,

@@ -178,8 +178,8 @@ function initEventSource() {
       applyCrawlCapacity(data.capacity);
       if (data.stats) updateStats(data.stats, data.queueLength);
       if (data.isRunning) {
-        updateUIStatus(data.isPaused ? 'paused' : 'running');
-        if (!data.isPaused) startTimer();
+        updateUIStatus(data.isStopping ? 'stopping' : (data.isPaused ? 'paused' : 'running'));
+        if (!data.isPaused && !data.isStopping) startTimer();
         startPolling();
       } else if (data.stats) {
         updateUIStatus('completed');
@@ -238,6 +238,11 @@ function initEventSource() {
       updateUIStatus('running');
       startTimer();
       startPolling();
+    });
+
+    evtSource.addEventListener('stopping', () => {
+      updateUIStatus('stopping');
+      stopTimer(true);
     });
 
     evtSource.addEventListener('stopped', () => {
@@ -304,7 +309,10 @@ function startPolling() {
       }
 
       if (statusData.isRunning) {
-        if (statusData.isPaused) {
+        if (statusData.isStopping) {
+          updateUIStatus('stopping');
+          stopTimer(true);
+        } else if (statusData.isPaused) {
           updateUIStatus('paused');
           stopTimer(true);
         } else {
@@ -374,8 +382,8 @@ async function restoreSessionState() {
     updateStats(status.stats, status.queueLength);
     await restoreSessionResults();
     if (status.isRunning) {
-      updateUIStatus(status.isPaused ? 'paused' : 'running');
-      if (!status.isPaused) startTimer();
+      updateUIStatus(status.isStopping ? 'stopping' : (status.isPaused ? 'paused' : 'running'));
+      if (!status.isPaused && !status.isStopping) startTimer();
       startPolling();
     } else {
       updateUIStatus('completed');
@@ -422,6 +430,11 @@ function updateUIStatus(state) {
     pauseBtn.disabled = false;
     pauseBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume';
     stopBtn.disabled = false;
+  } else if (state === 'stopping') {
+    statusText.textContent = 'Stopping…';
+    startBtn.disabled = true;
+    pauseBtn.disabled = true;
+    stopBtn.disabled = true;
   } else if (state === 'completed') {
     statusText.textContent = 'Audit Complete';
     startBtn.disabled = false;
@@ -1130,7 +1143,13 @@ pauseBtn.addEventListener('click', async () => {
 });
 
 stopBtn.addEventListener('click', async () => {
-  await crawlerFetch('/api/crawler/stop', { method: 'POST' });
+  updateUIStatus('stopping');
+  try {
+    await crawlerFetch('/api/crawler/stop', { method: 'POST' });
+  } catch (err) {
+    console.error('Abort failed:', err);
+    await fetchStatus();
+  }
 });
 
 resetBtn.addEventListener('click', async () => {

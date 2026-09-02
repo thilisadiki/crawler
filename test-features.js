@@ -80,6 +80,17 @@ async function runTests() {
   );
   console.log('✅ Browser disconnect detection tests passed');
 
+  console.log('--- 6. Testing Immediate Crawl Cancellation State ---');
+  const cancellationCrawler = new SiteCrawler({ seedUrl: 'https://example.com' });
+  cancellationCrawler.isRunning = true;
+  cancellationCrawler.abortController = new AbortController();
+  cancellationCrawler.queue = [{ url: 'https://example.com/queued', depth: 1 }];
+  cancellationCrawler.stop();
+  assert.strictEqual(cancellationCrawler.isCancelled, true, 'Stop should mark the crawl as cancelled');
+  assert.strictEqual(cancellationCrawler.abortController.signal.aborted, true, 'Stop should abort active HTTP work');
+  assert.strictEqual(cancellationCrawler.queue.length, 0, 'Stop should discard queued URLs');
+  console.log('✅ Immediate cancellation state test passed');
+
   console.log('\n🎉 ALL AUTOMATED TESTS PASSED SUCCESSFULLY!');
 }
 
