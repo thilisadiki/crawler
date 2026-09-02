@@ -1,5 +1,33 @@
 import { URL } from 'url';
 
+const CONTENT_AREA_SELECTORS = [
+  '.page-text',
+  '[class*="page-text"]',
+  '.seo-content',
+  '[class*="seo-content"]',
+  '[class*="seo_content"]',
+  '[class*="seoText"]',
+  '[class*="seo-text"]',
+  '[class*="kentico"]',
+  '#content',
+  '#seo-content',
+  '#seo-text',
+  '.seo-section',
+  '.bottom-seo',
+  '[data-seo-content]',
+  '[data-content-area]',
+  '.copy-section',
+  '[class*="copy-section"]',
+  '.content-block',
+  '[class*="content-block"]',
+  '.mainBlock',
+  '[class*="main-block"]',
+  '[class*="mainBlock"]',
+  'article'
+];
+
+const CONTENT_EXCLUSION_PATTERN = /nav|header|footer|sidebar|side-bar|menu|cookie|consent|modal|popup|banner|breadcrumb|toolbar|login|signup|betslip|bet-slip|winner|carousel|slider/i;
+
 export class Extractor {
   /**
    * Extract all SEO metadata, links, and optional custom content container data
@@ -7,7 +35,8 @@ export class Extractor {
   static async extractPageData(page, currentUrl, baseOrigin, options = {}) {
     const customSelector = options.customSelector || '';
 
-    return await page.evaluate(({ currentUrl, baseOrigin, customSelector }) => {
+    return await page.evaluate(({ currentUrl, baseOrigin, customSelector, contentSelectors }) => {
+      const contentExclusionPattern = /nav|header|footer|sidebar|side-bar|menu|cookie|consent|modal|popup|banner|breadcrumb|toolbar|login|signup|betslip|bet-slip|winner|carousel|slider/i;
       const getMeta = (name, attr = 'name') => {
         const el = document.querySelector(`meta[${attr}="${name}"]`) || document.querySelector(`meta[property="${name}"]`);
         return el ? el.getAttribute('content') || '' : '';
@@ -36,6 +65,62 @@ export class Extractor {
       let customHeadings = [];
       let customElement = null;
       let usedSelector = customSelector;
+      let detectionMethod = customSelector ? 'custom' : 'none';
+
+      const getWordCount = (text) => text.trim().split(/\s+/).filter(Boolean).length;
+      const isVisible = (el) => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      };
+      const hasExcludedContext = (el) => {
+        if (el.closest('header, nav, footer, aside, form, dialog, [role="navigation"], [role="banner"], [role="contentinfo"]')) return true;
+        let current = el;
+        while (current && current !== document.body) {
+          const descriptor = `${current.id || ''} ${typeof current.className === 'string' ? current.className : ''}`;
+          if (contentExclusionPattern.test(descriptor)) return true;
+          current = current.parentElement;
+        }
+        return false;
+      };
+      const cssEscape = (value) => window.CSS?.escape ? window.CSS.escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+      const getCssPath = (el) => {
+        if (el.id && document.querySelectorAll(`#${cssEscape(el.id)}`).length === 1) return `#${cssEscape(el.id)}`;
+        const semanticClass = Array.from(el.classList || []).find(className => /content|copy|article|detail|description|text|body|main/i.test(className));
+        if (semanticClass) return `${el.tagName.toLowerCase()}.${cssEscape(semanticClass)}`;
+
+        const parts = [];
+        let current = el;
+        while (current && current !== document.body && parts.length < 4) {
+          const tagName = current.tagName.toLowerCase();
+          const siblings = current.parentElement ? Array.from(current.parentElement.children).filter(child => child.tagName === current.tagName) : [];
+          const position = siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(current) + 1})` : '';
+          parts.unshift(`${tagName}${position}`);
+          const selector = parts.join(' > ');
+          if (document.querySelectorAll(selector).length === 1) return selector;
+          current = current.parentElement;
+        }
+        return el.tagName.toLowerCase();
+      };
+      const findHeuristicContentArea = () => {
+        const candidates = Array.from(document.querySelectorAll('main, article, section, [role="main"], div'))
+          .filter(el => isVisible(el) && !hasExcludedContext(el))
+          .map(el => {
+            const text = (el.innerText || '').trim();
+            const wordCount = text ? getWordCount(text) : 0;
+            const headings = el.querySelectorAll('h1, h2, h3, h4, h5, h6').length;
+            const paragraphs = el.querySelectorAll('p, li').length;
+            const links = el.querySelectorAll('a[href]').length;
+            const descriptor = `${el.id || ''} ${typeof el.className === 'string' ? el.className : ''}`;
+            const semanticBonus = /content|copy|article|detail|description|text|body|main/i.test(descriptor) ? 140 : 0;
+            const score = Math.min(wordCount, 1000) + (headings * 100) + Math.min(paragraphs, 12) * 24 + semanticBonus - Math.min(links, 80) * 20;
+            return { el, wordCount, headings, paragraphs, links, score };
+          })
+          .filter(candidate => candidate.wordCount >= 120 && (candidate.headings > 0 || candidate.paragraphs >= 2) && candidate.score >= 260)
+          .sort((a, b) => b.score - a.score || a.wordCount - b.wordCount);
+
+        return candidates[0] || null;
+      };
 
       if (customSelector) {
         try {
@@ -45,37 +130,32 @@ export class Extractor {
 
       // Smart auto-detection fallback if no specific selector provided
       if (!customElement && !customSelector) {
-        const potentialSelectors = [
-          '.page-text',
-          '[class*="page-text"]',
-          '.seo-content',
-          '[class*="seo-content"]',
-          '[class*="seo_content"]',
-          '[class*="seoText"]',
-          '[class*="seo-text"]',
-          '[class*="kentico"]',
-          '#content',
-          '#seo-content',
-          '#seo-text',
-          '.seo-section',
-          '.bottom-seo',
-          '[data-seo-content]',
-          'article'
-        ];
-        for (const sel of potentialSelectors) {
+        for (const sel of contentSelectors) {
           const el = document.querySelector(sel);
           if (el && el.innerText.trim().length > 30) {
             customElement = el;
             usedSelector = sel;
+            detectionMethod = 'selector';
             break;
           }
+        }
+      }
+
+      // If known selectors are absent, look for a focused, text-rich content block.
+      // This deliberately excludes page shells, navigation, betting widgets, and footers.
+      if (!customElement && !customSelector) {
+        const heuristicCandidate = findHeuristicContentArea();
+        if (heuristicCandidate) {
+          customElement = heuristicCandidate.el;
+          usedSelector = getCssPath(customElement);
+          detectionMethod = 'heuristic';
         }
       }
 
       if (customElement) {
         customFound = true;
         customText = customElement.innerText.trim();
-        customWordCount = customText ? customText.split(/\s+/).filter(Boolean).length : 0;
+        customWordCount = customText ? getWordCount(customText) : 0;
         customHeadings = Array.from(customElement.querySelectorAll('h1, h2, h3, h4, h5, h6'))
           .map(h => `${h.tagName}: ${h.innerText.trim()}`)
           .filter(Boolean);
@@ -149,6 +229,7 @@ export class Extractor {
         customContent: {
           detected: customFound,
           selectorUsed: usedSelector,
+          detectionMethod,
           wordCount: customWordCount,
           fullText: customText || '',
           textSnippet: customText || '',
@@ -156,7 +237,7 @@ export class Extractor {
         },
         links
       };
-    }, { currentUrl, baseOrigin, customSelector });
+    }, { currentUrl, baseOrigin, customSelector, contentSelectors: CONTENT_AREA_SELECTORS });
   }
 
   /**
@@ -192,6 +273,38 @@ export class Extractor {
     let customHeadings = [];
     let customElement = null;
     let usedSelector = customSelector;
+    let detectionMethod = customSelector ? 'custom' : 'none';
+
+    const getCheerioSelector = (element) => {
+      const id = element.attr('id');
+      if (id) return `#${id}`;
+      const classNames = (element.attr('class') || '').split(/\s+/).filter(Boolean);
+      const semanticClass = classNames.find(className => /content|copy|article|detail|description|text|body|main/i.test(className));
+      return semanticClass ? `${element[0].tagName}.${semanticClass}` : element[0].tagName;
+    };
+    const findCheerioHeuristicContentArea = () => {
+      const candidates = [];
+      $('main, article, section, [role="main"], div').each((_, element) => {
+        const $element = $(element);
+        const descriptor = `${$element.attr('id') || ''} ${$element.attr('class') || ''}`;
+        if ($element.is('header, nav, footer, aside, form, dialog, [role="navigation"], [role="banner"], [role="contentinfo"]') ||
+          $element.parents('header, nav, footer, aside, form, dialog, [role="navigation"], [role="banner"], [role="contentinfo"]').length ||
+          CONTENT_EXCLUSION_PATTERN.test(descriptor)) return;
+
+        const text = $element.text().trim();
+        const wordCount = text ? text.split(/\s+/).filter(Boolean).length : 0;
+        const headings = $element.find('h1, h2, h3, h4, h5, h6').length;
+        const paragraphs = $element.find('p, li').length;
+        const links = $element.find('a[href]').length;
+        const semanticBonus = /content|copy|article|detail|description|text|body|main/i.test(descriptor) ? 140 : 0;
+        const score = Math.min(wordCount, 1000) + (headings * 100) + Math.min(paragraphs, 12) * 24 + semanticBonus - Math.min(links, 80) * 20;
+        if (wordCount >= 120 && (headings > 0 || paragraphs >= 2) && score >= 260) {
+          candidates.push({ element: $element, wordCount, score });
+        }
+      });
+      candidates.sort((a, b) => b.score - a.score || a.wordCount - b.wordCount);
+      return candidates[0] || null;
+    };
 
     if (customSelector) {
       try {
@@ -201,30 +314,23 @@ export class Extractor {
     }
 
     if (!customElement && !customSelector) {
-      const potentialSelectors = [
-        '.page-text',
-        '[class*="page-text"]',
-        '.seo-content',
-        '[class*="seo-content"]',
-        '[class*="seo_content"]',
-        '[class*="seoText"]',
-        '[class*="seo-text"]',
-        '[class*="kentico"]',
-        '#content',
-        '#seo-content',
-        '#seo-text',
-        '.seo-section',
-        '.bottom-seo',
-        '[data-seo-content]',
-        'article'
-      ];
-      for (const sel of potentialSelectors) {
+      for (const sel of CONTENT_AREA_SELECTORS) {
         const el = $(sel);
         if (el.length > 0 && el.text().trim().length > 30) {
           customElement = el.first();
           usedSelector = sel;
+          detectionMethod = 'selector';
           break;
         }
+      }
+    }
+
+    if (!customElement && !customSelector) {
+      const heuristicCandidate = findCheerioHeuristicContentArea();
+      if (heuristicCandidate) {
+        customElement = heuristicCandidate.element;
+        usedSelector = getCheerioSelector(customElement);
+        detectionMethod = 'heuristic';
       }
     }
 
@@ -312,6 +418,7 @@ export class Extractor {
       customContent: {
         detected: customFound,
         selectorUsed: usedSelector,
+        detectionMethod,
         wordCount: customWordCount,
         fullText: customText || '',
         textSnippet: customText || '',

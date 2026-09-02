@@ -646,7 +646,7 @@ function renderPagesTable() {
   crawlTableBody.innerHTML = filtered.map((r, idx) => {
     const statusClass = r.statusCode === 200 ? 'status-200' : (r.statusCode >= 300 && r.statusCode < 400 ? 'status-3xx' : 'status-4xx');
     const customBadge = r.customContent?.detected
-      ? `<span class="status-code-badge badge-target-yes">Found (${r.customContent.wordCount}w)</span>`
+      ? `<span class="status-code-badge badge-target-yes">${r.customContent.detectionMethod === 'heuristic' ? 'Auto-found' : 'Found'} (${r.customContent.wordCount}w)</span>`
       : `<span class="status-code-badge badge-target-no">None</span>`;
 
     return `
@@ -888,7 +888,8 @@ function openDetailModal(item) {
   
   if (item.customContent?.detected) {
     modalCustomBanner.className = 'alert-banner found';
-    modalCustomBanner.innerHTML = `Content Area Verified (${item.customContent.wordCount.toLocaleString()} words extracted in full)`;
+    const detectionLabel = item.customContent.detectionMethod === 'heuristic' ? 'Content Area Auto-detected' : 'Content Area Verified';
+    modalCustomBanner.innerHTML = `${detectionLabel} (${item.customContent.wordCount.toLocaleString()} words extracted in full)`;
     modalCustomSelector.textContent = item.customContent.selectorUsed || 'Auto-detected';
     modalCustomHeadings.textContent = item.customContent.headings?.length ? item.customContent.headings.join(' • ') : '[No Sub-headings inside content area]';
     modalCustomSnippet.textContent = fullContentText;

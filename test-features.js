@@ -1,7 +1,9 @@
 import assert from 'assert';
+import * as cheerio from 'cheerio';
 import { RobotsParser } from './src/engine/robots.js';
 import { SiteCrawler } from './src/engine/crawler.js';
 import { Exporter } from './src/engine/exporter.js';
+import { Extractor } from './src/engine/extractor.js';
 
 async function runTests() {
   console.log('--- 1. Testing RobotsParser ---');
@@ -90,6 +92,23 @@ async function runTests() {
   assert.strictEqual(cancellationCrawler.abortController.signal.aborted, true, 'Stop should abort active HTTP work');
   assert.strictEqual(cancellationCrawler.queue.length, 0, 'Stop should discard queued URLs');
   console.log('✅ Immediate cancellation state test passed');
+
+  console.log('--- 7. Testing Content-Area Selector and Heuristic Detection ---');
+  const contentWords = Array.from({ length: 180 }, () => 'meaningful').join(' ');
+  const selectorResult = Extractor.extractFromHtml(`
+    <html><body><nav>Home Casino Sport</nav><div class="copy-section"><h2>Download the app</h2><p>${contentWords}</p><p>Useful editorial copy.</p></div><footer>Terms Privacy</footer></body></html>
+  `, 'https://example.com/app', 'https://example.com', { cheerio });
+  assert.strictEqual(selectorResult.customContent.detected, true, 'Known content-block aliases should be detected');
+  assert.strictEqual(selectorResult.customContent.selectorUsed, '.copy-section', 'The copy-section selector should be recorded');
+  assert.strictEqual(selectorResult.customContent.detectionMethod, 'selector', 'Known selectors should be marked as selector detection');
+
+  const heuristicResult = Extractor.extractFromHtml(`
+    <html><body><nav>${Array.from({ length: 100 }, () => 'navigation').join(' ')}</nav><section class="campaign-panel"><h2>Useful campaign guide</h2><p>${contentWords}</p><p>Additional explanatory editorial content.</p></section><footer>Terms Privacy</footer></body></html>
+  `, 'https://example.com/campaign', 'https://example.com', { cheerio });
+  assert.strictEqual(heuristicResult.customContent.detected, true, 'Text-rich unknown containers should use heuristic detection');
+  assert.strictEqual(heuristicResult.customContent.detectionMethod, 'heuristic', 'Unknown containers should be marked as heuristic detection');
+  assert(heuristicResult.customContent.fullText.includes('Useful campaign guide'), 'Heuristic extraction should retain the focused content block');
+  console.log('✅ Content-area selector and heuristic tests passed');
 
   console.log('\n🎉 ALL AUTOMATED TESTS PASSED SUCCESSFULLY!');
 }

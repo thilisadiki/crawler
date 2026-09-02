@@ -149,10 +149,19 @@ If no custom selector is supplied, OmniCrawl looks for these common content cont
 .seo-section
 .bottom-seo
 [data-seo-content]
+.copy-section
+[class*="copy-section"]
+.content-block
+[class*="content-block"]
+.mainBlock
+[class*="main-block"]
+[class*="mainBlock"]
 article
 ```
 
-For a reliable content-area audit, provide the site's exact selector rather than relying on auto-detection.
+If no known selector matches, OmniCrawl applies a conservative content-area heuristic. It selects a visible, text-rich container with headings or structured copy and low link density, while excluding navigation, cookie banners, sidebars, betting widgets, and footers. Heuristic matches are shown as **Auto-found** in the table and **Content Area Auto-detected** in the inspector.
+
+For a reliable content-area audit, provide the site's exact selector rather than relying on auto-detection. A custom selector overrides automatic detection for the entire crawl.
 
 ## Crawl behavior
 
