@@ -351,6 +351,15 @@
               </tbody>
             </table>
           </div>
+          <div id="pagesPagination" class="table-pagination hidden" aria-label="Pages table pagination">
+            <span id="pagesPaginationSummary" class="pagination-summary"></span>
+            <div class="pagination-actions">
+              <label>Rows <select id="pagesPaginationSize" aria-label="Rows per page"><option value="50">50</option><option value="100" selected>100</option><option value="250">250</option></select></label>
+              <button id="pagesPaginationPrevious" class="pagination-button" type="button">Previous</button>
+              <span id="pagesPaginationPage" class="pagination-page"></span>
+              <button id="pagesPaginationNext" class="pagination-button" type="button">Next</button>
+            </div>
+          </div>
         </div>
 
         <!-- VIEW 2: Discovered Links View (Direct Table of All Internal & External Links) -->
@@ -391,6 +400,15 @@
               </tbody>
             </table>
           </div>
+          <div id="linksPagination" class="table-pagination hidden" aria-label="Links table pagination">
+            <span id="linksPaginationSummary" class="pagination-summary"></span>
+            <div class="pagination-actions">
+              <label>Rows <select id="linksPaginationSize" aria-label="Rows per page"><option value="50">50</option><option value="100" selected>100</option><option value="250">250</option></select></label>
+              <button id="linksPaginationPrevious" class="pagination-button" type="button">Previous</button>
+              <span id="linksPaginationPage" class="pagination-page"></span>
+              <button id="linksPaginationNext" class="pagination-button" type="button">Next</button>
+            </div>
+          </div>
         </div>
 
         <!-- VIEW 3: Page Content & SEO Text View -->
@@ -398,6 +416,15 @@
           <div class="content-explorer-layout" id="contentExplorerLayout">
             <div class="empty-state" style="padding: 40px;">
               <p>No content extracted yet. Run a crawl to view extracted SEO text blocks.</p>
+            </div>
+          </div>
+          <div id="contentPagination" class="table-pagination hidden" aria-label="Content explorer pagination">
+            <span id="contentPaginationSummary" class="pagination-summary"></span>
+            <div class="pagination-actions">
+              <label>Pages <select id="contentPaginationSize" aria-label="Content cards per page"><option value="5">5</option><option value="10" selected>10</option><option value="25">25</option></select></label>
+              <button id="contentPaginationPrevious" class="pagination-button" type="button">Previous</button>
+              <span id="contentPaginationPage" class="pagination-page"></span>
+              <button id="contentPaginationNext" class="pagination-button" type="button">Next</button>
             </div>
           </div>
         </div>

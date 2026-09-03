@@ -34,6 +34,7 @@ The dashboard is designed for on-demand audits. Each browser tab receives its ow
 - Exports pages, links, and content-area data as CSV or an Excel workbook with a summary, link inventory, and one sheet per crawled page.
 - Supports multiple simultaneous user sessions while keeping crawl state isolated per browser tab.
 - Persists crawl runs, page results, links, and extracted text to MySQL when database credentials are configured.
+- Paginates large result sets (100 page/link rows and 10 text cards by default) so 1,000+ page audits stay responsive.
 
 ## Architecture
 

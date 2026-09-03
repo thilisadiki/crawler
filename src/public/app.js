@@ -39,6 +39,9 @@ let accumulatedElapsedMs = 0;
 let sessionStartTime = null;
 let activeEngine = null;
 let activeCapacity = null;
+const pagesPagination = { page: 1, pageSize: 100 };
+const linksPagination = { page: 1, pageSize: 100 };
+const contentPagination = { page: 1, pageSize: 10 };
 
 // Sort States
 let pagesSort = { column: 'id', direction: 'asc' };
@@ -100,6 +103,21 @@ const contentExplorerLayout = document.getElementById('contentExplorerLayout');
 const tableSearch = document.getElementById('tableSearch');
 const filterTabs = document.querySelectorAll('#pageFilterTabs .tab-pill');
 const linkFilterTabs = document.querySelectorAll('#linkFilterTabs .tab-pill');
+const pagesPaginationControls = {
+  root: document.getElementById('pagesPagination'), summary: document.getElementById('pagesPaginationSummary'),
+  page: document.getElementById('pagesPaginationPage'), previous: document.getElementById('pagesPaginationPrevious'),
+  next: document.getElementById('pagesPaginationNext'), size: document.getElementById('pagesPaginationSize')
+};
+const linksPaginationControls = {
+  root: document.getElementById('linksPagination'), summary: document.getElementById('linksPaginationSummary'),
+  page: document.getElementById('linksPaginationPage'), previous: document.getElementById('linksPaginationPrevious'),
+  next: document.getElementById('linksPaginationNext'), size: document.getElementById('linksPaginationSize')
+};
+const contentPaginationControls = {
+  root: document.getElementById('contentPagination'), summary: document.getElementById('contentPaginationSummary'),
+  page: document.getElementById('contentPaginationPage'), previous: document.getElementById('contentPaginationPrevious'),
+  next: document.getElementById('contentPaginationNext'), size: document.getElementById('contentPaginationSize')
+};
 
 // Modal Elements
 const detailModal = document.getElementById('detailModal');
@@ -584,9 +602,48 @@ function stopTimer(freeze = false) {
 
 // Master Render Function
 function renderCurrentViews() {
-  renderPagesTable();
-  renderAllLinksTable();
-  renderContentView();
+  // Rendering hundreds of hidden table rows and full text cards is expensive.
+  // Render only the visible explorer view; switching tabs renders its latest data.
+  if (currentMainView === 'links-view') return renderAllLinksTable();
+  if (currentMainView === 'content-view') return renderContentView();
+  return renderPagesTable();
+}
+
+function paginateRows(rows, pagination) {
+  const totalPages = Math.max(1, Math.ceil(rows.length / pagination.pageSize));
+  pagination.page = Math.min(Math.max(1, pagination.page), totalPages);
+  const start = (pagination.page - 1) * pagination.pageSize;
+  return { rows: rows.slice(start, start + pagination.pageSize), start, totalPages };
+}
+
+function updatePagination(controls, pagination, total, pageInfo, label) {
+  if (!controls.root) return;
+  const hasRows = total > 0;
+  controls.root.classList.toggle('hidden', !hasRows);
+  if (!hasRows) return;
+  const from = pageInfo.start + 1;
+  const to = Math.min(pageInfo.start + pagination.pageSize, total);
+  controls.summary.textContent = `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} ${label}`;
+  controls.page.textContent = `Page ${pagination.page} of ${pageInfo.totalPages}`;
+  controls.previous.disabled = pagination.page === 1;
+  controls.next.disabled = pagination.page === pageInfo.totalPages;
+  controls.size.value = String(pagination.pageSize);
+}
+
+function bindPaginationControls(controls, pagination, render) {
+  controls.previous.addEventListener('click', () => {
+    pagination.page = Math.max(1, pagination.page - 1);
+    render();
+  });
+  controls.next.addEventListener('click', () => {
+    pagination.page++;
+    render();
+  });
+  controls.size.addEventListener('change', () => {
+    pagination.pageSize = Number.parseInt(controls.size.value, 10) || pagination.pageSize;
+    pagination.page = 1;
+    render();
+  });
 }
 
 // VIEW 1: Pages Table
@@ -670,10 +727,13 @@ function renderPagesTable() {
         </td>
       </tr>
     `;
+    updatePagination(pagesPaginationControls, pagesPagination, 0, { start: 0, totalPages: 1 }, 'pages');
     return;
   }
 
-  crawlTableBody.innerHTML = filtered.map((r, idx) => {
+  const pageInfo = paginateRows(filtered, pagesPagination);
+  updatePagination(pagesPaginationControls, pagesPagination, filtered.length, pageInfo, 'pages');
+  crawlTableBody.innerHTML = pageInfo.rows.map((r, idx) => {
     const statusClass = r.statusCode === 200 ? 'status-200' : (r.statusCode >= 300 && r.statusCode < 400 ? 'status-3xx' : 'status-4xx');
     const customBadge = r.customContent?.detected
       ? `<span class="status-code-badge badge-target-yes">${r.customContent.detectionMethod === 'heuristic' ? 'Auto-found' : 'Found'} (${r.customContent.wordCount}w)</span>`
@@ -681,7 +741,7 @@ function renderPagesTable() {
 
     return `
       <tr data-url="${encodeURIComponent(r.url)}">
-        <td style="color: var(--text-dim); font-family: var(--font-mono); font-size: 0.72rem;">${r.id || idx + 1}</td>
+        <td style="color: var(--text-dim); font-family: var(--font-mono); font-size: 0.72rem;">${r.id || pageInfo.start + idx + 1}</td>
         <td><span class="status-code-badge ${statusClass}">${r.statusCode || 'ERR'}</span></td>
         <td class="url-cell" title="${r.url}">${r.url}</td>
         <td class="title-cell" title="${r.title || '[No Title Tag]'}">${r.title || '<span style="color: var(--text-dim)">[No Title Tag]</span>'}</td>
@@ -801,10 +861,13 @@ function renderAllLinksTable() {
         </td>
       </tr>
     `;
+    updatePagination(linksPaginationControls, linksPagination, 0, { start: 0, totalPages: 1 }, 'links');
     return;
   }
 
-  allLinksTableBody.innerHTML = filtered.map((l, idx) => {
+  const pageInfo = paginateRows(filtered, linksPagination);
+  updatePagination(linksPaginationControls, linksPagination, filtered.length, pageInfo, 'links');
+  allLinksTableBody.innerHTML = pageInfo.rows.map((l, idx) => {
     const isInternal = l.linkType === 'Internal';
     const typeBadgeClass = isInternal ? 'status-200' : 'badge-target-no';
     const statusCode = l.statusCode || 200;
@@ -812,7 +875,7 @@ function renderAllLinksTable() {
 
     return `
       <tr>
-        <td style="color: var(--text-dim); font-family: var(--font-mono); font-size: 0.72rem;">${idx + 1}</td>
+        <td style="color: var(--text-dim); font-family: var(--font-mono); font-size: 0.72rem;">${pageInfo.start + idx + 1}</td>
         <td><span class="status-code-badge ${statusClass}">${statusCode}</span></td>
         <td style="font-weight: 500; color: var(--text-primary); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${l.anchorText}">${l.anchorText}</td>
         <td class="url-cell" style="max-width: 360px;" title="${l.url}">
@@ -835,10 +898,13 @@ function renderContentView() {
         <p>No content extracted yet. Run a crawl to view extracted SEO text blocks.</p>
       </div>
     `;
+    updatePagination(contentPaginationControls, contentPagination, 0, { start: 0, totalPages: 1 }, 'pages');
     return;
   }
 
-  contentExplorerLayout.innerHTML = crawlResults.map((r, idx) => {
+  const pageInfo = paginateRows(crawlResults, contentPagination);
+  updatePagination(contentPaginationControls, contentPagination, crawlResults.length, pageInfo, 'pages');
+  contentExplorerLayout.innerHTML = pageInfo.rows.map((r, idx) => {
     const headings = r.customContent?.headings || r.h1List || [];
     const fullText = r.customContent?.fullText || r.customContent?.textSnippet || r.fullPageText || '[No content text extracted]';
     const wordCount = r.customContent?.wordCount || r.totalWords || 0;
@@ -853,7 +919,7 @@ function renderContentView() {
             </div>
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
-            <button class="btn btn-sm btn-outline copy-text-btn" data-idx="${idx}">
+            <button class="btn btn-sm btn-outline copy-text-btn" data-url="${encodeURIComponent(r.url)}">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               Copy Full Text
             </button>
@@ -882,8 +948,8 @@ function renderContentView() {
   document.querySelectorAll('.copy-text-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const idx = parseInt(btn.getAttribute('data-idx'), 10);
-      const r = crawlResults[idx];
+      const url = decodeURIComponent(btn.getAttribute('data-url'));
+      const r = crawlResults.find(result => result.url === url);
       if (r) {
         const textToCopy = r.customContent?.fullText || r.customContent?.textSnippet || r.fullPageText || '';
         navigator.clipboard.writeText(textToCopy).then(() => {
@@ -1047,6 +1113,7 @@ document.querySelectorAll('#crawlTable .sortable-th').forEach(th => {
       pagesSort.column = col;
       pagesSort.direction = 'asc';
     }
+    pagesPagination.page = 1;
     renderPagesTable();
   });
 });
@@ -1061,6 +1128,7 @@ document.querySelectorAll('#allLinksTable .sortable-th').forEach(th => {
       linksSort.column = col;
       linksSort.direction = 'asc';
     }
+    linksPagination.page = 1;
     renderAllLinksTable();
   });
 });
@@ -1071,6 +1139,7 @@ document.querySelectorAll('#linkFilterTabs .tab-pill').forEach(pill => {
     document.querySelectorAll('#linkFilterTabs .tab-pill').forEach(p => p.classList.remove('active'));
     pill.classList.add('active');
     activeLinkFilter = pill.getAttribute('data-linkfilter');
+    linksPagination.page = 1;
     renderAllLinksTable();
   });
 });
@@ -1232,6 +1301,8 @@ resetBtn.addEventListener('click', async () => {
 
 tableSearch.addEventListener('input', (e) => {
   searchQuery = e.target.value;
+  pagesPagination.page = 1;
+  linksPagination.page = 1;
   renderCurrentViews();
 });
 
@@ -1240,9 +1311,14 @@ filterTabs.forEach(pill => {
     filterTabs.forEach(p => p.classList.remove('active'));
     pill.classList.add('active');
     activeFilter = pill.getAttribute('data-filter');
+    pagesPagination.page = 1;
     renderCurrentViews();
   });
 });
+
+bindPaginationControls(pagesPaginationControls, pagesPagination, renderPagesTable);
+bindPaginationControls(linksPaginationControls, linksPagination, renderAllLinksTable);
+bindPaginationControls(contentPaginationControls, contentPagination, renderContentView);
 
 // Initialize on Load
 restoreSessionState().finally(initEventSource);
