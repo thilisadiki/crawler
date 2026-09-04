@@ -359,6 +359,10 @@ body {
   align-items: end;
 }
 
+.form-row-grid.core-settings-grid {
+  grid-template-columns: minmax(180px, 250px);
+}
+
 .field-group {
   display: flex;
   flex-direction: column;
@@ -513,6 +517,15 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.advanced-section-title {
+  margin: 2px 0 10px;
+  color: var(--text-secondary);
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
 }
 
 .advanced-drawer.hidden { display: none; }
