@@ -31,8 +31,8 @@ export function useCrawler() {
   }, []);
 
   useEffect(() => {
-    void sync().catch(() => {});
-    const eventSource = new EventSource(crawlerClient.streamUrl());
+    let eventSource: EventSource | null = null;
+    let disposed = false;
     const receiveStatus = (event: MessageEvent) => {
       const data = JSON.parse(event.data);
       setState(deriveState(data)); setStats(data.stats || EMPTY_STATS); setQueueLength(data.queueLength || 0);
@@ -49,19 +49,31 @@ export function useCrawler() {
       setStats(data.stats || EMPTY_STATS); setQueueLength(data.queueLength || 0);
     };
     const receiveReset = () => { setState('ready'); setStats(EMPTY_STATS); setQueueLength(0); setPages([]); setLinks([]); setEngine(null); setError(null); };
-    eventSource.addEventListener('status', receiveStatus);
-    eventSource.addEventListener('pageCrawled', receivePage);
-    eventSource.addEventListener('capacity', event => setCapacity(JSON.parse((event as MessageEvent).data)));
-    eventSource.addEventListener('started', () => void sync());
-    eventSource.addEventListener('completed', () => void sync());
-    eventSource.addEventListener('stopped', () => void sync());
-    eventSource.addEventListener('revoked', () => {
-      setState('ready'); setError('This dashboard session was revoked by an administrator.');
-    });
-    eventSource.addEventListener('reset', receiveReset);
-    // Hostinger proxies can temporarily buffer SSE. Polling keeps this UI live then.
     const poller = window.setInterval(() => void sync().catch(() => {}), 2000);
-    return () => { eventSource.close(); window.clearInterval(poller); };
+    // Create the server-issued tab session before starting the event stream.
+    // Hostinger proxies can temporarily buffer SSE, so polling remains a fallback.
+    void (async () => {
+      try {
+        await crawlerClient.ready();
+        if (disposed) return;
+        await sync();
+        if (disposed) return;
+        eventSource = new EventSource(await crawlerClient.streamUrl());
+        eventSource.addEventListener('status', receiveStatus);
+        eventSource.addEventListener('pageCrawled', receivePage);
+        eventSource.addEventListener('capacity', event => setCapacity(JSON.parse((event as MessageEvent).data)));
+        eventSource.addEventListener('started', () => void sync());
+        eventSource.addEventListener('completed', () => void sync());
+        eventSource.addEventListener('stopped', () => void sync());
+        eventSource.addEventListener('revoked', () => {
+          setState('ready'); setError('This dashboard session was revoked by an administrator.');
+        });
+        eventSource.addEventListener('reset', receiveReset);
+      } catch (caught) {
+        if (!disposed) setError(caught instanceof Error ? caught.message : 'Could not establish a secure dashboard session.');
+      }
+    })();
+    return () => { disposed = true; eventSource?.close(); window.clearInterval(poller); };
   }, [sync]);
 
   const run = useCallback(async (action: 'start' | 'pause' | 'resume' | 'stop' | 'reset', config?: CrawlConfig) => {

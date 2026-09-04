@@ -361,32 +361,44 @@ app.post('/api/admin/sessions/:sessionId/revoke', requireAdmin, requireSameOrigi
   return res.status(404).json({ error: 'That session is no longer available.' });
 });
 
-function getSessionId(req) {
-  const candidate = req.get('x-crawler-session') || req.query.sessionId || req.body?.sessionId || 'default';
-  return /^[a-zA-Z0-9_-]{8,128}$/.test(candidate) ? candidate : 'default';
+function getRequestedDashboardSessionId(req) {
+  const candidate = req.get('x-crawler-session') || req.query.sessionId || '';
+  return /^[a-zA-Z0-9_-]{8,128}$/.test(candidate) ? candidate : null;
 }
 
-function trackDashboardSession(req, res, next) {
-  pruneSessionRecords();
-  const sessionId = getSessionId(req);
-  const existing = dashboardSessions.get(sessionId);
-  if (existing?.revokedAt) {
-    return res.status(403).json({ error: 'This dashboard session has been revoked by an administrator.' });
-  }
+function createDashboardSession(req, ownerAdminSessionId) {
   const now = Date.now();
-  dashboardSessions.set(sessionId, existing || {
-    id: sessionId,
+  const session = {
+    id: randomUUID(),
+    ownerAdminSessionId,
     createdAt: now,
     lastSeenAt: now,
     ip: getClientIp(req),
     userAgent: req.get('user-agent') || 'Unknown user agent'
-  });
-  dashboardSessions.get(sessionId).lastSeenAt = now;
+  };
+  dashboardSessions.set(session.id, session);
+  return session;
+}
+
+function requireDashboardSession(req, res, next) {
+  pruneSessionRecords();
+  const sessionId = getRequestedDashboardSessionId(req);
+  if (!sessionId) return res.status(400).json({ error: 'A server-issued dashboard session is required. Refresh the dashboard and try again.' });
+  const existing = dashboardSessions.get(sessionId);
+  if (!existing || existing.revokedAt) {
+    return res.status(403).json({ error: 'This dashboard session has been revoked by an administrator.' });
+  }
+  const adminSession = getAdminSession(req, false);
+  if (!adminSession || existing.ownerAdminSessionId !== adminSession.id) {
+    return res.status(403).json({ error: 'This dashboard session belongs to a different administrator session.' });
+  }
+  existing.lastSeenAt = Date.now();
+  req.dashboardSession = existing;
   return next();
 }
 
 function getSessionCrawler(req) {
-  const sessionId = getSessionId(req);
+  const sessionId = req.dashboardSession?.id || getRequestedDashboardSessionId(req);
   const record = crawlerSessions.get(sessionId);
   if (record) record.updatedAt = Date.now();
   return { sessionId, crawler: record?.crawler || null };
@@ -460,8 +472,30 @@ function getCrawlCapacity() {
   };
 }
 
-app.use('/api/crawler', requireAdmin, trackDashboardSession, requireSameOrigin);
-app.use('/api/export', requireAdmin, trackDashboardSession);
+// Dashboard IDs are created by the server, retained in one browser tab, and
+// bound to the signed-in administrator session. They are not accepted simply
+// because a client supplied a UUID.
+app.post('/api/crawler/session', requireAdmin, requireSameOrigin, (req, res) => {
+  pruneSessionRecords();
+  const adminSession = getAdminSession(req, false);
+  const requestedId = getRequestedDashboardSessionId(req);
+  if (requestedId) {
+    const existing = dashboardSessions.get(requestedId);
+    if (existing?.revokedAt) return res.status(403).json({ error: 'This dashboard session has been revoked by an administrator.' });
+    if (existing && existing.ownerAdminSessionId !== adminSession?.id) {
+      return res.status(403).json({ error: 'This dashboard session belongs to a different administrator session.' });
+    }
+    if (existing) {
+      existing.lastSeenAt = Date.now();
+      return res.json({ sessionId: existing.id, resumed: true });
+    }
+  }
+  const created = createDashboardSession(req, adminSession?.id);
+  return res.status(201).json({ sessionId: created.id, resumed: false });
+});
+
+app.use('/api/crawler', requireAdmin, requireDashboardSession, requireSameOrigin);
+app.use('/api/export', requireAdmin, requireDashboardSession);
 
 function broadcastSSE(sessionId, eventType, data) {
   const record = crawlerSessions.get(sessionId);
