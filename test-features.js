@@ -103,11 +103,13 @@ async function runTests() {
   assert.strictEqual(selectorResult.customContent.detectionMethod, 'selector', 'Known selectors should be marked as selector detection');
 
   const heuristicResult = Extractor.extractFromHtml(`
-    <html><body><nav>${Array.from({ length: 100 }, () => 'navigation').join(' ')}</nav><section class="campaign-panel"><h2>Useful campaign guide</h2><p>${contentWords}</p><p>Additional explanatory editorial content.</p></section><footer>Terms Privacy</footer></body></html>
+    <html><body><nav>${Array.from({ length: 100 }, () => 'navigation').join(' ')}</nav><section class="campaign-panel"><h2>Useful campaign guide</h2><p>${contentWords}</p><p>Additional explanatory editorial content. <a href="/inside-content">Read more</a></p></section><footer><a href="/terms">Terms</a> Privacy</footer></body></html>
   `, 'https://example.com/campaign', 'https://example.com', { cheerio });
   assert.strictEqual(heuristicResult.customContent.detected, true, 'Text-rich unknown containers should use heuristic detection');
   assert.strictEqual(heuristicResult.customContent.detectionMethod, 'heuristic', 'Unknown containers should be marked as heuristic detection');
   assert(heuristicResult.customContent.fullText.includes('Useful campaign guide'), 'Heuristic extraction should retain the focused content block');
+  assert.strictEqual(heuristicResult.links.find(link => link.url === 'https://example.com/inside-content')?.isInsideCustom, true, 'Links inside heuristic content should be identified as in-content');
+  assert.strictEqual(heuristicResult.links.find(link => link.url === 'https://example.com/terms')?.isInsideCustom, false, 'Links outside heuristic content should not be identified as in-content');
   console.log('✅ Content-area selector and heuristic tests passed');
 
   console.log('--- 8. Testing Root-Domain Seed URL Normalization ---');

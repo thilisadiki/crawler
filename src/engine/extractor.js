@@ -198,6 +198,7 @@ export class Extractor {
           url: resolvedHref,
           anchorText,
           linkType,
+          isInternal: linkType === 'Internal',
           rel,
           target,
           isNofollow,
@@ -359,7 +360,9 @@ export class Extractor {
       
       let isInsideCustom = false;
       if (customElement) {
-        isInsideCustom = $a.parents(usedSelector).length > 0 || $a.closest(customElement).length > 0;
+        // Use the actual selected element rather than its selector text. This
+        // works equally for a known selector and a generated heuristic path.
+        isInsideCustom = $a.is(customElement) || $a.parents().toArray().includes(customElement[0]);
       }
 
       let linkType = 'Internal';

@@ -58,6 +58,10 @@ const pagesPagination = { page: 1, pageSize: 100 };
 const linksPagination = { page: 1, pageSize: 100 };
 const contentPagination = { page: 1, pageSize: 10 };
 
+function isInternalLink(link) {
+  return link?.linkType === 'Internal' || link?.isInternal === true;
+}
+
 // Sort States
 let pagesSort = { column: 'id', direction: 'asc' };
 let linksSort = { column: 'id', direction: 'asc' };
@@ -562,8 +566,8 @@ function updateStats(stats, queueLength) {
   let nofollowLinks = 0;
 
   for (const l of allDiscoveredLinks) {
-    if (l.isInternal) internalLinks++;
-    else externalLinks++;
+    if (isInternalLink(l)) internalLinks++;
+    else if (l.linkType === 'External') externalLinks++;
     if (l.isInsideCustom) inContentLinks++;
     if (l.statusCode === 200) ok200Links++;
     if (l.statusCode >= 400) errLinks++;
@@ -799,7 +803,7 @@ function renderAllLinksTable() {
     if (!matchSearch) return false;
 
     // 2. Link Sub-filter Pill
-    if (activeLinkFilter === 'internal') return l.linkType === 'Internal';
+    if (activeLinkFilter === 'internal') return isInternalLink(l);
     if (activeLinkFilter === 'external') return l.linkType === 'External';
     if (activeLinkFilter === 'in-content') return l.isInsideCustom;
     if (activeLinkFilter === '200') return l.statusCode === 200;
