@@ -145,6 +145,9 @@ export class CrawlStorage {
         is_inside_content TINYINT(1) NOT NULL DEFAULT 0,
         is_valid_http TINYINT(1) NOT NULL DEFAULT 0,
         status_code INT NULL,
+        final_status_code INT NULL,
+        final_url TEXT NULL,
+        redirect_chain JSON NULL,
         INDEX idx_crawl_links_crawl_id (crawl_id),
         INDEX idx_crawl_links_page_id (page_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -156,6 +159,18 @@ export class CrawlStorage {
       await this.pool.query('ALTER TABLE crawl_pages ADD COLUMN resources_json JSON NULL AFTER full_page_text');
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+    }
+    // Add redirect fields for databases created before redirect auditing was introduced.
+    for (const statement of [
+      'ALTER TABLE crawl_links ADD COLUMN final_status_code INT NULL AFTER status_code',
+      'ALTER TABLE crawl_links ADD COLUMN final_url TEXT NULL AFTER final_status_code',
+      'ALTER TABLE crawl_links ADD COLUMN redirect_chain JSON NULL AFTER final_url'
+    ]) {
+      try {
+        await this.pool.query(statement);
+      } catch (error) {
+        if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+      }
     }
   }
 
@@ -237,12 +252,14 @@ export class CrawlStorage {
         const values = links.map(link => [
           crawlId, pageId, result.url, nullable(link.url), nullable(link.rawHref), nullable(link.anchorText),
           nullable(link.linkType), nullable(link.rel), nullable(link.target), link.isNofollow ? 1 : 0,
-          link.isInsideCustom ? 1 : 0, link.isValidHttp ? 1 : 0, nullable(link.statusCode)
+          link.isInsideCustom ? 1 : 0, link.isValidHttp ? 1 : 0, nullable(link.statusCode),
+          nullable(link.finalStatusCode), nullable(link.finalUrl), JSON.stringify(link.redirectChain || [])
         ]);
         await connection.query(
           `INSERT INTO crawl_links (
             crawl_id, page_id, source_url, target_url, raw_href, anchor_text, link_type, rel_value,
-            target_value, is_nofollow, is_inside_content, is_valid_http, status_code
+            target_value, is_nofollow, is_inside_content, is_valid_http, status_code, final_status_code,
+            final_url, redirect_chain
           ) VALUES ?`,
           [values]
         );
@@ -288,7 +305,9 @@ export class CrawlStorage {
         rawHref: link.raw_href || '', url: link.target_url || '', anchorText: link.anchor_text || '',
         linkType: link.link_type || 'Internal', rel: link.rel_value || '', target: link.target_value || '',
         isNofollow: Boolean(link.is_nofollow), isInsideCustom: Boolean(link.is_inside_content),
-        isValidHttp: Boolean(link.is_valid_http), statusCode: link.status_code
+        isValidHttp: Boolean(link.is_valid_http), statusCode: link.status_code,
+        finalStatusCode: link.final_status_code, finalUrl: link.final_url || '',
+        redirectChain: parseJson(link.redirect_chain, [])
       });
       linksByPage.set(link.page_id, pageLinks);
     }

@@ -399,7 +399,12 @@ export class SiteCrawler extends EventEmitter {
           rel: link.rel,
           isNofollow: link.isNofollow,
           isInsideCustom: link.isInsideCustom,
-          statusCode: link.statusCode || null
+          statusCode: link.statusCode ?? null,
+          finalStatusCode: link.finalStatusCode ?? null,
+          finalUrl: link.finalUrl || '',
+          redirectChain: link.redirectChain || [],
+          redirectCount: link.redirectCount || 0,
+          redirectError: link.redirectError || null
         };
         this.allLinks.push(linkRecord);
 
@@ -615,7 +620,12 @@ export class SiteCrawler extends EventEmitter {
           statusCode: link.statusCode || 200,
           isInsideCustom: link.isInsideCustom,
           isNofollow: link.isNofollow,
-          pageDepth: depth
+          pageDepth: depth,
+          finalStatusCode: link.finalStatusCode ?? null,
+          finalUrl: link.finalUrl || '',
+          redirectChain: link.redirectChain || [],
+          redirectCount: link.redirectCount || 0,
+          redirectError: link.redirectError || null
         };
         this.allLinks.push(linkRecord);
 

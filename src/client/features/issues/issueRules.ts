@@ -7,6 +7,7 @@ interface IssueGroup { code: string; severity: Severity; label: string; descript
 const DEFINITIONS: Array<[string, Severity, string, string]> = [
   ['page-error', 'Critical', 'Crawl error', 'The page returned an error or could not be crawled.'],
   ['broken-internal-link', 'Critical', 'Broken internal link', 'An internal link points to a page that failed.'],
+  ['redirected-internal-link', 'Opportunity', 'Redirected internal link', 'An internal link redirects before reaching its final destination.'],
   ['missing-title', 'Warning', 'Missing page title', 'Search results need a descriptive title.'],
   ['duplicate-title', 'Warning', 'Duplicate page title', 'Multiple pages use the same title.'],
   ['title-too-short', 'Opportunity', 'Title is too short', 'Title is under 30 characters.'],
@@ -65,5 +66,9 @@ export function getSeoIssues(pages: CrawlPage[], links: CrawledLink[]): SeoIssue
   for (const matches of descriptions.values()) if (matches.length > 1) matches.forEach(page => add('duplicate-description', page, `Shared by ${matches.length} pages: “${(page.metaDescription || '').slice(0, 120)}”`));
   for (const matches of content.values()) if (matches.length > 1) matches.forEach(({ page, wordCount, source }) => add('duplicate-content', page, `Exact ${source} match shared by ${matches.length} pages (${wordCount.toLocaleString()} words).`));
   for (const link of links) if (internal(link) && (link.statusCode === 0 || (link.statusCode || 0) >= 400)) add('broken-internal-link', { url: link.sourceUrl || 'Unknown source page' }, `${link.targetUrl || link.url || link.rawHref || 'Unknown target'} returned ${link.statusCode || 'no response'}.`);
+  for (const link of links) if (internal(link) && (link.redirectCount || link.redirectChain?.length)) {
+    const hops = link.redirectCount || link.redirectChain?.length || 0;
+    add('redirected-internal-link', { url: link.sourceUrl || 'Unknown source page' }, `${link.targetUrl || link.url || link.rawHref || 'Unknown target'} redirects in ${hops} hop${hops === 1 ? '' : 's'} to ${link.finalUrl || 'an unknown destination'}.`);
+  }
   return [...groups.values()].flatMap(group => group.items.map(item => ({ ...item, code: group.code, severity: group.severity, label: group.label, description: group.description })));
 }

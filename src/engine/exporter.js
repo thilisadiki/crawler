@@ -135,7 +135,11 @@ export class Exporter {
       { header: '#', key: 'id', width: 6 },
       { header: 'Status', key: 'statusCode', width: 12 },
       { header: 'Anchor Text', key: 'anchorText', width: 35 },
-      { header: 'Destination Target URL', key: 'url', width: 45 },
+      { header: 'Requested Target URL', key: 'url', width: 45 },
+      { header: 'Redirect Hops', key: 'redirectCount', width: 14 },
+      { header: 'Final Status', key: 'finalStatusCode', width: 14 },
+      { header: 'Final Destination URL', key: 'finalUrl', width: 45 },
+      { header: 'Redirect Chain', key: 'redirectChain', width: 65 },
       { header: 'Link Type', key: 'linkType', width: 14 },
       { header: 'In Content Area', key: 'isInsideCustom', width: 16 },
       { header: 'Nofollow', key: 'isNofollow', width: 12 },
@@ -161,6 +165,10 @@ export class Exporter {
         statusCode: l.statusCode || 200,
         anchorText: l.anchorText || '[Empty Anchor / Image]',
         url: l.url || l.targetUrl || '',
+        redirectCount: l.redirectCount || (l.redirectChain || []).length || 0,
+        finalStatusCode: l.finalStatusCode ?? l.statusCode ?? '',
+        finalUrl: l.finalUrl || l.url || l.targetUrl || '',
+        redirectChain: (l.redirectChain || []).map(hop => `${hop.statusCode}: ${hop.url} → ${hop.destinationUrl}`).join(' | '),
         linkType: l.linkType || 'Internal',
         isInsideCustom: l.isInsideCustom ? 'YES' : 'NO',
         isNofollow: l.isNofollow ? 'YES' : 'NO',
@@ -405,6 +413,7 @@ export class Exporter {
     const definitions = [
       ['page-error', 'Critical', 'Crawl error', 'The page returned an error or could not be crawled.'],
       ['broken-internal-link', 'Critical', 'Broken internal link', 'An internal link points to a page that failed.'],
+      ['redirected-internal-link', 'Opportunity', 'Redirected internal link', 'An internal link redirects before reaching its final destination.'],
       ['missing-title', 'Warning', 'Missing page title', 'Search results need a descriptive title.'],
       ['duplicate-title', 'Warning', 'Duplicate page title', 'Multiple pages use the same title.'],
       ['title-too-short', 'Opportunity', 'Title is too short', 'Title is under 30 characters.'],
@@ -485,6 +494,10 @@ export class Exporter {
     for (const link of allLinks) {
       if ((link?.linkType === 'Internal' || link?.isInternal === true) && (link.statusCode === 0 || link.statusCode >= 400)) {
         add('broken-internal-link', { url: link.sourceUrl }, `${link.targetUrl || link.url || link.rawHref || 'Unknown target'} returned ${link.statusCode || 'no response'}.`);
+      }
+      if ((link?.linkType === 'Internal' || link?.isInternal === true) && (link.redirectCount || link.redirectChain?.length)) {
+        const hops = link.redirectCount || link.redirectChain.length;
+        add('redirected-internal-link', { url: link.sourceUrl }, `${link.targetUrl || link.url || link.rawHref || 'Unknown target'} redirects in ${hops} hop${hops === 1 ? '' : 's'} to ${link.finalUrl || 'an unknown destination'}.`);
       }
     }
 
@@ -621,7 +634,11 @@ export class Exporter {
       'Source Page URL',
       'Anchor Text',
       'Target URL',
-      'Status Code',
+      'Requested Status Code',
+      'Redirect Hops',
+      'Final Status Code',
+      'Final Destination URL',
+      'Redirect Chain',
       'Link Type',
       'In Content Area',
       'Nofollow',
@@ -633,6 +650,10 @@ export class Exporter {
       this.escapeCSV(l.anchorText),
       this.escapeCSV(l.targetUrl || l.url),
       this.escapeCSV(l.statusCode || 200),
+      this.escapeCSV(l.redirectCount || (l.redirectChain || []).length || 0),
+      this.escapeCSV(l.finalStatusCode ?? l.statusCode ?? ''),
+      this.escapeCSV(l.finalUrl || l.targetUrl || l.url),
+      this.escapeCSV((l.redirectChain || []).map(hop => `${hop.statusCode}: ${hop.url} → ${hop.destinationUrl}`).join(' | ')),
       this.escapeCSV(l.linkType),
       this.escapeCSV(l.isInsideCustom ? 'YES' : 'NO'),
       this.escapeCSV(l.isNofollow ? 'YES' : 'NO'),

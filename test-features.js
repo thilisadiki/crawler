@@ -1,9 +1,11 @@
 import assert from 'assert';
+import http from 'http';
 import * as cheerio from 'cheerio';
 import { RobotsParser } from './src/engine/robots.js';
 import { SiteCrawler } from './src/engine/crawler.js';
 import { Exporter } from './src/engine/exporter.js';
 import { Extractor } from './src/engine/extractor.js';
+import { LinkStatusChecker } from './src/engine/statusChecker.js';
 
 async function runTests() {
   console.log('--- 1. Testing RobotsParser ---');
@@ -124,7 +126,37 @@ async function runTests() {
   assert.strictEqual(normalizedAliases[0].linkType, 'Internal', 'Bare/www alias links should be reclassified as internal');
   console.log('✅ Redirect scope tests passed');
 
-  console.log('--- 6. Testing Browser Disconnect Detection ---');
+  console.log('--- 6. Testing Redirect Chain Recording ---');
+  const redirectServer = http.createServer((req, res) => {
+    if (req.url === '/old') {
+      res.writeHead(301, { Location: '/middle' });
+    } else if (req.url === '/middle') {
+      res.writeHead(302, { Location: '/final' });
+    } else if (req.url === '/final') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('Final destination');
+      return;
+    } else {
+      res.writeHead(404);
+    }
+    res.end();
+  });
+  await new Promise(resolve => redirectServer.listen(0, '127.0.0.1', resolve));
+  try {
+    const { port } = redirectServer.address();
+    const redirectUrl = `http://127.0.0.1:${port}/old`;
+    const checked = await new LinkStatusChecker({ timeoutMs: 3000 }).checkUrl(redirectUrl);
+    assert.strictEqual(checked.statusCode, 301, 'The requested URL must retain its redirect status');
+    assert.strictEqual(checked.finalStatusCode, 200, 'The destination response status must be retained separately');
+    assert.strictEqual(checked.finalUrl, `http://127.0.0.1:${port}/final`, 'The final redirect destination should be recorded');
+    assert.strictEqual(checked.redirectChain.length, 2, 'Every redirect hop should be retained');
+    assert.strictEqual(checked.redirectChain[1].statusCode, 302, 'Intermediate redirect status should be retained');
+  } finally {
+    await new Promise(resolve => redirectServer.close(resolve));
+  }
+  console.log('✅ Redirect chain tests passed');
+
+  console.log('--- 7. Testing Browser Disconnect Detection ---');
   assert.strictEqual(
     excludeCrawler.isBrowserDisconnectError(new Error('browserContext.newPage: Target page, context or browser has been closed')),
     true,
@@ -137,7 +169,7 @@ async function runTests() {
   );
   console.log('✅ Browser disconnect detection tests passed');
 
-  console.log('--- 7. Testing Immediate Crawl Cancellation State ---');
+  console.log('--- 8. Testing Immediate Crawl Cancellation State ---');
   const cancellationCrawler = new SiteCrawler({ seedUrl: 'https://example.com' });
   cancellationCrawler.isRunning = true;
   cancellationCrawler.abortController = new AbortController();
@@ -148,7 +180,7 @@ async function runTests() {
   assert.strictEqual(cancellationCrawler.queue.length, 0, 'Stop should discard queued URLs');
   console.log('✅ Immediate cancellation state test passed');
 
-  console.log('--- 8. Testing Content-Area Selector and Heuristic Detection ---');
+  console.log('--- 9. Testing Content-Area Selector and Heuristic Detection ---');
   const contentWords = Array.from({ length: 180 }, () => 'meaningful').join(' ');
   const selectorResult = Extractor.extractFromHtml(`
     <html><body><nav>Home Casino Sport</nav><div class="copy-section"><h2>Download the app</h2><p>${contentWords}</p><p>Useful editorial copy.</p></div><footer>Terms Privacy</footer></body></html>

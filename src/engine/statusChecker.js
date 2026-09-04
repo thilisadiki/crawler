@@ -4,120 +4,138 @@ export class LinkStatusChecker {
   constructor(options = {}) {
     this.cache = new Map();
     this.timeoutMs = options.timeoutMs || 8000;
+    this.maxRedirects = options.maxRedirects || 10;
     this.userAgent = options.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
     this.geo = options.geo || null;
   }
 
-  /**
-   * Check status code for a single URL with cache and fallback
-   */
-  async checkUrlStatus(url, cancellationSignal = null) {
-    if (!url) return 400;
-    if (cancellationSignal?.aborted) return undefined;
+  isRedirectStatus(status) {
+    return [301, 302, 303, 307, 308].includes(status);
+  }
 
-    // Handle non-HTTP schemas
-    if (url.startsWith('mailto:') || url.startsWith('tel:')) return 200;
-    if (url.startsWith('javascript:') || url === '#') return 200;
+  cloneResult(result) {
+    return { ...result, redirectChain: (result.redirectChain || []).map(hop => ({ ...hop })) };
+  }
 
-    if (this.cache.has(url)) {
-      return this.cache.get(url);
+  async requestWithRedirectChain(url, method, headers, signal) {
+    let currentUrl = url;
+    const redirectChain = [];
+
+    for (let hop = 0; hop <= this.maxRedirects; hop++) {
+      const response = await fetch(currentUrl, { method, signal, headers, redirect: 'manual' });
+      const statusCode = response.status;
+      const location = response.headers.get('location');
+
+      if (this.isRedirectStatus(statusCode) && location) {
+        let destinationUrl;
+        try {
+          destinationUrl = new URL(location, currentUrl).toString();
+        } catch {
+          response.body?.cancel?.().catch(() => {});
+          return { statusCode, finalStatusCode: statusCode, finalUrl: currentUrl, redirectChain, redirectError: 'Invalid redirect location' };
+        }
+        redirectChain.push({ url: currentUrl, statusCode, destinationUrl });
+        response.body?.cancel?.().catch(() => {});
+        currentUrl = destinationUrl;
+        continue;
+      }
+
+      response.body?.cancel?.().catch(() => {});
+      return {
+        // Keep the source response code visible: a 301 should not become an
+        // apparently direct 200 just because its destination loaded.
+        statusCode: redirectChain[0]?.statusCode || statusCode,
+        finalStatusCode: statusCode,
+        finalUrl: currentUrl,
+        redirectChain
+      };
     }
+
+    return {
+      statusCode: redirectChain[0]?.statusCode || 500,
+      finalStatusCode: 500,
+      finalUrl: currentUrl,
+      redirectChain,
+      redirectError: `Redirect chain exceeded ${this.maxRedirects} hops`
+    };
+  }
+
+  /** Check a URL while retaining its complete HTTP redirect information. */
+  async checkUrl(url, cancellationSignal = null) {
+    if (!url) return { statusCode: 400, finalStatusCode: 400, finalUrl: url, redirectChain: [] };
+    if (cancellationSignal?.aborted) return undefined;
+    if (/^(?:mailto|tel|javascript):/i.test(url) || url === '#') {
+      return { statusCode: 200, finalStatusCode: 200, finalUrl: url, redirectChain: [] };
+    }
+    if (this.cache.has(url)) return this.cloneResult(this.cache.get(url));
 
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        this.cache.set(url, 200);
-        return 200;
+        const result = { statusCode: 200, finalStatusCode: 200, finalUrl: url, redirectChain: [] };
+        this.cache.set(url, result);
+        return this.cloneResult(result);
       }
-    } catch (e) {
-      this.cache.set(url, 400);
-      return 400;
+    } catch {
+      const result = { statusCode: 400, finalStatusCode: 400, finalUrl: url, redirectChain: [] };
+      this.cache.set(url, result);
+      return this.cloneResult(result);
     }
 
-    let status = null;
-
-    const requestHeaders = {
-      'User-Agent': this.userAgent,
-      'Accept': '*/*'
-    };
-
-    if (this.geo) {
-      if (this.geo.ip) {
-        requestHeaders['X-Forwarded-For'] = this.geo.ip;
-        requestHeaders['X-Real-IP'] = this.geo.ip;
-      }
-      if (this.geo.countryCode) {
-        requestHeaders['CF-IPCountry'] = this.geo.countryCode;
-        requestHeaders['X-Country-Code'] = this.geo.countryCode;
-      }
-      if (this.geo.locale) {
-        requestHeaders['Accept-Language'] = `${this.geo.locale},en;q=0.9`;
-      }
+    const requestHeaders = { 'User-Agent': this.userAgent, Accept: '*/*' };
+    if (this.geo?.ip) {
+      requestHeaders['X-Forwarded-For'] = this.geo.ip;
+      requestHeaders['X-Real-IP'] = this.geo.ip;
     }
+    if (this.geo?.countryCode) {
+      requestHeaders['CF-IPCountry'] = this.geo.countryCode;
+      requestHeaders['X-Country-Code'] = this.geo.countryCode;
+    }
+    if (this.geo?.locale) requestHeaders['Accept-Language'] = `${this.geo.locale},en;q=0.9`;
 
-    // Attempt 1: Fast HEAD request
+    let result = null;
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
       const signal = cancellationSignal ? AbortSignal.any([controller.signal, cancellationSignal]) : controller.signal;
-
       try {
-        const res = await fetch(url, {
-          method: 'HEAD',
-          signal,
-          headers: requestHeaders,
-          redirect: 'follow'
-        });
-        status = res.status;
+        result = await this.requestWithRedirectChain(url, 'HEAD', requestHeaders, signal);
       } finally {
         clearTimeout(timeoutId);
       }
-    } catch (headErr) {
-      // Ignore and fallback to GET
-    }
+    } catch {}
 
     if (cancellationSignal?.aborted) return undefined;
 
-    // Attempt 2: If HEAD was 405 (Method Not Allowed), 403, or failed, fallback to GET
-    if (!status || status === 405 || status === 403) {
+    // Some servers reject HEAD, so repeat with a lightweight GET while still
+    // following and recording every redirect ourselves.
+    if (!result || result.finalStatusCode === 405 || result.finalStatusCode === 403) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
         const signal = cancellationSignal ? AbortSignal.any([controller.signal, cancellationSignal]) : controller.signal;
-
         try {
-          const res = await fetch(url, {
-            method: 'GET',
-            signal,
-            headers: {
-              ...requestHeaders,
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-            },
-            redirect: 'follow'
-          });
-
-          status = res.status;
-          if (res.body && res.body.cancel) {
-            res.body.cancel().catch(() => {});
-          }
+          result = await this.requestWithRedirectChain(url, 'GET', {
+            ...requestHeaders,
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+          }, signal);
         } finally {
           clearTimeout(timeoutId);
         }
-      } catch (getErr) {
-        status = status || 500;
-      }
+      } catch {}
     }
 
     if (cancellationSignal?.aborted) return undefined;
-
-    const finalStatus = status || 500;
-    this.cache.set(url, finalStatus);
-    return finalStatus;
+    const finalResult = result || { statusCode: 500, finalStatusCode: 500, finalUrl: url, redirectChain: [] };
+    this.cache.set(url, finalResult);
+    return this.cloneResult(finalResult);
   }
 
-  /**
-   * Check an array of link objects in parallel with concurrency limiting
-   */
+  async checkUrlStatus(url, cancellationSignal = null) {
+    const result = await this.checkUrl(url, cancellationSignal);
+    return result?.statusCode;
+  }
+
   async checkLinksInParallel(links, maxConcurrency = 10, deadlineMs = 0, cancellationSignal = null) {
     const queue = [...links];
     const workers = [];
@@ -125,25 +143,25 @@ export class LinkStatusChecker {
 
     const worker = async () => {
       while (queue.length > 0) {
-        if (cancellationSignal?.aborted) break;
-        if (deadlineAt && Date.now() >= deadlineAt) break;
+        if (cancellationSignal?.aborted || (deadlineAt && Date.now() >= deadlineAt)) break;
         const link = queue.shift();
         if (!link || link.statusCode !== undefined) continue;
-
         try {
-          const statusCode = await this.checkUrlStatus(link.url, cancellationSignal);
-          if (statusCode !== undefined) link.statusCode = statusCode;
-        } catch (e) {
-          if (cancellationSignal?.aborted) break;
-          link.statusCode = 500;
+          const result = await this.checkUrl(link.url, cancellationSignal);
+          if (result === undefined) continue;
+          link.statusCode = result.statusCode;
+          link.finalStatusCode = result.finalStatusCode;
+          link.finalUrl = result.finalUrl;
+          link.redirectChain = result.redirectChain;
+          link.redirectCount = result.redirectChain.length;
+          if (result.redirectError) link.redirectError = result.redirectError;
+        } catch {
+          if (!cancellationSignal?.aborted) link.statusCode = 500;
         }
       }
     };
 
-    for (let i = 0; i < Math.min(maxConcurrency, links.length); i++) {
-      workers.push(worker());
-    }
-
+    for (let i = 0; i < Math.min(maxConcurrency, links.length); i++) workers.push(worker());
     await Promise.all(workers);
     return links;
   }

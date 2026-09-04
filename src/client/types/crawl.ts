@@ -52,6 +52,11 @@ export interface CrawledLink {
   target?: string;
   sourceUrl?: string;
   statusCode?: number | null;
+  finalStatusCode?: number | null;
+  finalUrl?: string;
+  redirectCount?: number;
+  redirectError?: string | null;
+  redirectChain?: Array<{ url: string; statusCode: number; destinationUrl: string }>;
   isNofollow?: boolean;
   isInsideCustom?: boolean;
 }
