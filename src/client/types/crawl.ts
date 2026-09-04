@@ -49,6 +49,18 @@ export interface CrawledLink {
   isInsideCustom?: boolean;
 }
 
+export interface CrawledResource {
+  url: string;
+  rawUrl?: string;
+  resourceType?: string;
+  element?: string;
+  attribute?: string;
+  statusCode?: number | null;
+  sizeBytes?: number | null;
+  discoveryStatus?: string;
+  sourceUrl?: string;
+}
+
 export interface CustomContent {
   detected?: boolean;
   selectorUsed?: string;
@@ -71,6 +83,7 @@ export interface CrawlPage {
   fullPageText?: string;
   error?: string;
   links?: CrawledLink[];
+  resources?: CrawledResource[];
   customContent?: CustomContent;
 }
 

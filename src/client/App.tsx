@@ -2,6 +2,7 @@ import { FormEvent, useMemo, useState } from 'react';
 import { crawlerClient } from './api/crawler-client';
 import { useCrawler } from './features/crawl/useCrawler';
 import { LinksExplorer } from './features/links/LinksExplorer';
+import { ResourcesExplorer } from './features/resources/ResourcesExplorer';
 import type { CrawlConfig, CrawlPage, CrawlScope } from './types/crawl';
 import './styles.css';
 
@@ -50,7 +51,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [selectedPage, setSelectedPage] = useState<CrawlPage | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
-  const [explorerView, setExplorerView] = useState<'pages' | 'links'>('pages');
+  const [explorerView, setExplorerView] = useState<'pages' | 'links' | 'resources'>('pages');
   const running = crawler.state === 'running' || crawler.state === 'paused' || crawler.state === 'stopping';
   const maxWorkers = crawler.capacity?.maxWorkersPerCrawl || 1;
   const pages = useMemo(() => crawler.pages.filter(page => {
@@ -64,6 +65,7 @@ export default function App() {
     return true;
   }), [crawler.pages, filter, search]);
   const contentPages = crawler.pages.filter(contentFound).length;
+  const resourceCount = useMemo(() => crawler.pages.reduce((count, page) => count + (page.resources?.length || 0), 0), [crawler.pages]);
   const errors = (crawler.stats.errorsCount || 0) + (crawler.stats.blockedByRobotsCount || 0);
 
   function update<K extends keyof CrawlConfig>(key: K, value: CrawlConfig[K]) {
@@ -108,12 +110,12 @@ export default function App() {
         <Stat label="Errors & exclusions" value={errors} detail={crawler.engine?.mode === 'http' ? 'Direct DOM engine' : 'Browser-rendered crawl'} />
       </section>
       <section className="card explorer">
-        <div className="explorer-head"><div><p className="eyebrow">{explorerView === 'pages' ? 'Audited pages' : 'Discovered links & anchors'}</p><h2>{explorerView === 'pages' ? `${crawler.pages.length.toLocaleString()} page${crawler.pages.length === 1 ? '' : 's'} collected` : `${crawler.links.length.toLocaleString()} link${crawler.links.length === 1 ? '' : 's'} collected`}</h2></div><div className="export-wrap"><button className="secondary" onClick={() => setExportOpen(open => !open)}>Export ▾</button>{exportOpen && <div className="export-menu">{[
+        <div className="explorer-head"><div><p className="eyebrow">{explorerView === 'pages' ? 'Audited pages' : explorerView === 'links' ? 'Discovered links & anchors' : 'Resources & assets'}</p><h2>{explorerView === 'pages' ? `${crawler.pages.length.toLocaleString()} page${crawler.pages.length === 1 ? '' : 's'} collected` : explorerView === 'links' ? `${crawler.links.length.toLocaleString()} link${crawler.links.length === 1 ? '' : 's'} collected` : 'Embedded resource inventory'}</h2></div><div className="export-wrap"><button className="secondary" onClick={() => setExportOpen(open => !open)}>Export ▾</button>{exportOpen && <div className="export-menu">{[
           ['Excel workbook (.xlsx)', '/api/export/workbook.xlsx'], ['Pages CSV', '/api/export/pages.csv'], ['All links CSV', '/api/export/links.csv'], ['Resources CSV', '/api/export/resources.csv'], ['SEO issues CSV', '/api/export/issues.csv'], ['Content area CSV', '/api/export/custom-content.csv']
         ].map(([label, path]) => <a key={path} href={crawlerClient.exportUrl(path)}>{label}</a>)}</div>}</div></div>
-        <nav className="explorer-tabs" aria-label="Dashboard data views"><button className={explorerView === 'pages' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('pages')}>Pages <span>{crawler.pages.length}</span></button><button className={explorerView === 'links' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('links')}>Discovered links & anchors <span>{crawler.links.length}</span></button></nav>
-        <div className="toolbar"><input value={search} onChange={event => setSearch(event.target.value)} placeholder={explorerView === 'pages' ? 'Search URLs, titles or status codes…' : 'Search anchor text, URLs or status codes…'} />{explorerView === 'pages' && (['all', '200', 'content', 'missing', 'errors'] as const).map(item => <button key={item} className={filter === item ? 'pill active' : 'pill'} onClick={() => setFilter(item)}>{item === 'all' ? `All (${crawler.pages.length})` : item === '200' ? '200 OK' : item === 'content' ? `Content found (${contentPages})` : item === 'missing' ? `Content missing (${crawler.pages.length - contentPages})` : `Errors (${errors})`}</button>)}</div>
-        {explorerView === 'pages' ? <div className="table-wrap"><table><thead><tr><th>#</th><th>Status</th><th>URL</th><th>Title</th><th>Content area</th><th>Links</th><th>Latency</th><th /></tr></thead><tbody>{pages.length ? pages.map((page, index) => <tr key={page.url}><td>{index + 1}</td><td><span className={page.statusCode === 200 ? 'code success' : 'code failure'}>{page.statusCode ?? '—'}</span></td><td className="url"><a href={page.url} target="_blank" rel="noreferrer">{page.url}</a></td><td>{page.title || '—'}</td><td><span className={contentFound(page) ? 'tag positive' : 'tag neutral'}>{contentFound(page) ? `Found (${page.customContent?.wordCount || 0}w)` : 'None'}</span></td><td>{page.links?.length || 0}</td><td>{page.responseTime ? `${page.responseTime}ms` : '—'}</td><td><button className="inspect" onClick={() => setSelectedPage(page)}>Inspect</button></td></tr>) : <tr><td colSpan={8} className="empty">No audited pages match these filters.</td></tr>}</tbody></table></div> : <LinksExplorer links={crawler.links} sharedSearch={search} />}
+        <nav className="explorer-tabs" aria-label="Dashboard data views"><button className={explorerView === 'pages' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('pages')}>Pages <span>{crawler.pages.length}</span></button><button className={explorerView === 'links' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('links')}>Discovered links & anchors <span>{crawler.links.length}</span></button><button className={explorerView === 'resources' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('resources')}>Resources & assets <span>{resourceCount}</span></button></nav>
+        <div className="toolbar"><input value={search} onChange={event => setSearch(event.target.value)} placeholder={explorerView === 'pages' ? 'Search URLs, titles or status codes…' : explorerView === 'links' ? 'Search anchor text, URLs or status codes…' : 'Search resource URLs, types, source pages or status…'} />{explorerView === 'pages' && (['all', '200', 'content', 'missing', 'errors'] as const).map(item => <button key={item} className={filter === item ? 'pill active' : 'pill'} onClick={() => setFilter(item)}>{item === 'all' ? `All (${crawler.pages.length})` : item === '200' ? '200 OK' : item === 'content' ? `Content found (${contentPages})` : item === 'missing' ? `Content missing (${crawler.pages.length - contentPages})` : `Errors (${errors})`}</button>)}</div>
+        {explorerView === 'pages' ? <div className="table-wrap"><table><thead><tr><th>#</th><th>Status</th><th>URL</th><th>Title</th><th>Content area</th><th>Links</th><th>Latency</th><th /></tr></thead><tbody>{pages.length ? pages.map((page, index) => <tr key={page.url}><td>{index + 1}</td><td><span className={page.statusCode === 200 ? 'code success' : 'code failure'}>{page.statusCode ?? '—'}</span></td><td className="url"><a href={page.url} target="_blank" rel="noreferrer">{page.url}</a></td><td>{page.title || '—'}</td><td><span className={contentFound(page) ? 'tag positive' : 'tag neutral'}>{contentFound(page) ? `Found (${page.customContent?.wordCount || 0}w)` : 'None'}</span></td><td>{page.links?.length || 0}</td><td>{page.responseTime ? `${page.responseTime}ms` : '—'}</td><td><button className="inspect" onClick={() => setSelectedPage(page)}>Inspect</button></td></tr>) : <tr><td colSpan={8} className="empty">No audited pages match these filters.</td></tr>}</tbody></table></div> : explorerView === 'links' ? <LinksExplorer links={crawler.links} sharedSearch={search} /> : <ResourcesExplorer pages={crawler.pages} sharedSearch={search} />}
       </section>
     </main>
     {selectedPage && <PageInspector page={selectedPage} onClose={() => setSelectedPage(null)} />}
