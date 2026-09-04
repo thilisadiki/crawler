@@ -714,6 +714,16 @@ function comparableUrl(value) {
   }
 }
 
+function getExactContentCandidate(page) {
+  const contentAreaText = (page.customContent?.fullText || page.customContent?.textSnippet || '').trim();
+  const source = contentAreaText ? 'content area' : 'full page';
+  const text = contentAreaText || (page.fullPageText || '');
+  const normalized = text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+  const wordCount = normalized ? normalized.split(' ').length : 0;
+  // Very short shared template snippets are not meaningful duplicate-content findings.
+  return wordCount >= 100 ? { normalized, wordCount, source } : null;
+}
+
 function getIssueGroups() {
   const definitions = [
     ['page-error', 'Critical', 'Crawl error', 'The page returned an error or could not be crawled.'],
@@ -724,6 +734,7 @@ function getIssueGroups() {
     ['title-too-long', 'Opportunity', 'Title is too long', 'Title is over 60 characters.'],
     ['missing-description', 'Warning', 'Missing meta description', 'The page has no meta description.'],
     ['duplicate-description', 'Warning', 'Duplicate meta description', 'Multiple pages use the same meta description.'],
+    ['duplicate-content', 'Warning', 'Exact duplicate content', 'Multiple pages have identical extracted text after whitespace and case normalisation.'],
     ['description-too-short', 'Opportunity', 'Meta description is too short', 'Description is under 70 characters.'],
     ['description-too-long', 'Opportunity', 'Meta description is too long', 'Description is over 160 characters.'],
     ['missing-h1', 'Warning', 'Missing H1', 'The page has no H1 heading.'],
@@ -737,6 +748,7 @@ function getIssueGroups() {
   const add = (code, page, detail) => groups.get(code)?.items.push({ url: page.url, detail });
   const titleMap = new Map();
   const descriptionMap = new Map();
+  const contentMap = new Map();
 
   for (const page of crawlResults) {
     if (page.statusCode >= 400 || page.error) add('page-error', page, page.error || `Returned HTTP ${page.statusCode}.`);
@@ -773,6 +785,13 @@ function getIssueGroups() {
     if (/\bnoindex\b/i.test(page.metaRobots || '')) add('noindex', page, `Robots directive: ${page.metaRobots}`);
     const contentWords = page.customContent?.wordCount || page.totalWords || 0;
     if (contentWords < 300) add('thin-content', page, `${contentWords.toLocaleString()} extracted words.`);
+
+    const contentCandidate = getExactContentCandidate(page);
+    if (contentCandidate) {
+      const matchingPages = contentMap.get(`${contentCandidate.source}|${contentCandidate.normalized}`) || [];
+      matchingPages.push({ page, ...contentCandidate });
+      contentMap.set(`${contentCandidate.source}|${contentCandidate.normalized}`, matchingPages);
+    }
   }
 
   for (const [title, pages] of titleMap) {
@@ -780,6 +799,11 @@ function getIssueGroups() {
   }
   for (const [description, pages] of descriptionMap) {
     if (pages.length > 1) pages.forEach(page => add('duplicate-description', page, `Shared by ${pages.length} pages: “${page.metaDescription.slice(0, 120)}”`));
+  }
+  for (const pages of contentMap.values()) {
+    if (pages.length > 1) pages.forEach(({ page, wordCount, source }) => {
+      add('duplicate-content', page, `Exact ${source} match shared by ${pages.length} pages (${wordCount.toLocaleString()} words).`);
+    });
   }
   for (const link of allDiscoveredLinks) {
     if (isInternalLink(link) && (link.statusCode === 0 || link.statusCode >= 400)) {

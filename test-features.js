@@ -57,6 +57,14 @@ async function runTests() {
   const resourcesCsv = Exporter.generateResourcesCSV(sampleResults);
   assert(resourcesCsv.includes('Type,URL,Discovery Status'), 'Resources CSV should contain resource headers');
   assert(resourcesCsv.includes('site.css'), 'Resources CSV should contain the asset URL');
+  const duplicateText = Array.from({ length: 120 }, () => 'identical editorial content').join(' ');
+  const duplicatePages = ['one', 'two'].map(path => ({
+    url: `https://example.com/${path}`, statusCode: 200, title: `A distinct descriptive title for ${path}`,
+    metaDescription: `A distinct meta description for ${path} that is long enough for this duplicate-content test fixture.`,
+    canonical: `https://example.com/${path}`, h1: `Heading ${path}`, totalWords: 360, fullPageText: duplicateText
+  }));
+  const duplicateIssues = Exporter.getSEOIssues(duplicatePages);
+  assert.strictEqual(duplicateIssues.filter(issue => issue.code === 'duplicate-content').length, 2, 'Every exact duplicate page should receive a duplicate-content issue');
   console.log('✅ Exporter tests passed');
 
   console.log('--- 3. Testing Single URL Scope Crawl ---');
