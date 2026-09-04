@@ -13,16 +13,18 @@ export class RobotsParser {
     }
   }
 
-  static async fetchForOrigin(originUrl, userAgent = '*') {
+  static async fetchForOrigin(originUrl, userAgent = '*', networkPolicy = null) {
     try {
       const parsed = new URL(originUrl);
       const robotsUrl = `${parsed.origin}/robots.txt`;
+      if (networkPolicy) await networkPolicy.assertSafePublicUrl(robotsUrl);
       
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
       
       const res = await fetch(robotsUrl, {
         signal: controller.signal,
+        redirect: 'error',
         headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }
       });
       clearTimeout(timeoutId);

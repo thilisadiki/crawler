@@ -7,6 +7,7 @@ export class LinkStatusChecker {
     this.maxRedirects = options.maxRedirects || 10;
     this.userAgent = options.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
     this.geo = options.geo || null;
+    this.networkPolicy = options.networkPolicy || null;
   }
 
   isRedirectStatus(status) {
@@ -22,6 +23,7 @@ export class LinkStatusChecker {
     const redirectChain = [];
 
     for (let hop = 0; hop <= this.maxRedirects; hop++) {
+      if (this.networkPolicy) await this.networkPolicy.assertSafePublicUrl(currentUrl);
       const response = await fetch(currentUrl, { method, signal, headers, redirect: 'manual' });
       const statusCode = response.status;
       const location = response.headers.get('location');
@@ -36,6 +38,7 @@ export class LinkStatusChecker {
         }
         redirectChain.push({ url: currentUrl, statusCode, destinationUrl });
         response.body?.cancel?.().catch(() => {});
+        if (this.networkPolicy) await this.networkPolicy.assertSafePublicUrl(destinationUrl);
         currentUrl = destinationUrl;
         continue;
       }
@@ -82,6 +85,20 @@ export class LinkStatusChecker {
       return this.cloneResult(result);
     }
 
+    if (this.networkPolicy) {
+      try {
+        await this.networkPolicy.assertSafePublicUrl(url);
+      } catch (error) {
+        return {
+          statusCode: 0,
+          finalStatusCode: 0,
+          finalUrl: url,
+          redirectChain: [],
+          redirectError: error instanceof Error ? error.message : 'Unsafe link target blocked.'
+        };
+      }
+    }
+
     const requestHeaders = { 'User-Agent': this.userAgent, Accept: '*/*' };
     if (this.geo?.ip) {
       requestHeaders['X-Forwarded-For'] = this.geo.ip;
@@ -103,7 +120,11 @@ export class LinkStatusChecker {
       } finally {
         clearTimeout(timeoutId);
       }
-    } catch {}
+    } catch (error) {
+      if (error?.name === 'UnsafeCrawlTargetError') {
+        result = { statusCode: 0, finalStatusCode: 0, finalUrl: url, redirectChain: [], redirectError: error.message };
+      }
+    }
 
     if (cancellationSignal?.aborted) return undefined;
 
@@ -122,7 +143,11 @@ export class LinkStatusChecker {
         } finally {
           clearTimeout(timeoutId);
         }
-      } catch {}
+      } catch (error) {
+        if (error?.name === 'UnsafeCrawlTargetError') {
+          result = { statusCode: 0, finalStatusCode: 0, finalUrl: url, redirectChain: [], redirectError: error.message };
+        }
+      }
     }
 
     if (cancellationSignal?.aborted) return undefined;

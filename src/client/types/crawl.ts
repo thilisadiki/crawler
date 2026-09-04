@@ -15,7 +15,6 @@ export interface CrawlConfig {
   includePatterns: string[];
   respectRobotsTxt: boolean;
   region: string;
-  proxy: string;
   blockCrossDomainRedirects: boolean;
 }
 

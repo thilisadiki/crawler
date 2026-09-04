@@ -145,6 +145,7 @@ export class BrowserManager {
     this.geo = options.geo || null;
     this.blockCrossDomainRedirects = options.blockCrossDomainRedirects !== false;
     this.targetHostname = options.targetHostname || '';
+    this.networkPolicy = options.networkPolicy || null;
   }
 
   async init() {
@@ -359,10 +360,18 @@ export class BrowserManager {
       try {
         if (isHeavyAsset || isNonEssentialThirdParty) {
           await route.abort();
+        } else if (this.networkPolicy) {
+          // This catches browser navigations, subresources and client-side
+          // redirects before Chromium is allowed to request an internal host.
+          await this.networkPolicy.assertSafePublicUrl(requestUrl);
+          await route.continue();
         } else {
           await route.continue();
         }
-      } catch (e) {}
+      } catch (error) {
+        console.warn(`Blocked unsafe browser request: ${requestUrl}`);
+        await route.abort().catch(() => {});
+      }
     });
 
     // Mask webdriver and set geo scripts

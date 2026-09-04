@@ -6,8 +6,12 @@ import { SiteCrawler } from './src/engine/crawler.js';
 import { Exporter } from './src/engine/exporter.js';
 import { Extractor } from './src/engine/extractor.js';
 import { LinkStatusChecker } from './src/engine/statusChecker.js';
+import { CrawlNetworkPolicy, isBlockedIpAddress } from './src/security/network-policy.js';
 
 async function runTests() {
+  const publicTestPolicy = new CrawlNetworkPolicy({
+    lookup: async () => [{ address: '93.184.216.34', family: 4 }]
+  });
   console.log('--- 1. Testing RobotsParser ---');
   const sampleRobots = `
     User-agent: *
@@ -75,11 +79,16 @@ async function runTests() {
   const singleCrawler = new SiteCrawler({
     seedUrl: 'https://example.com',
     crawlScope: 'single-url',
-    autoScroll: false
+    autoScroll: false,
+    networkPolicy: publicTestPolicy
   });
   await singleCrawler.start();
   assert.strictEqual(singleCrawler.results.length, 1, 'Single URL scope must only crawl 1 page');
-  assert.strictEqual(singleCrawler.results[0].renderComparison?.available, true, 'Browser crawls should retain source-versus-rendered DOM metrics');
+  if (singleCrawler.isBrowserMode) {
+    assert.strictEqual(singleCrawler.results[0].renderComparison?.available, true, 'Browser crawls should retain source-versus-rendered DOM metrics');
+  } else {
+    assert.strictEqual(singleCrawler.results[0].renderMode, 'direct-dom', 'A browser-unavailable environment should use the direct DOM fallback');
+  }
   console.log('✅ Single URL Scope test passed');
 
   console.log('--- 4. Testing Exclusion Regex Filter ---');
@@ -249,6 +258,33 @@ async function runTests() {
   );
   assert.strictEqual(Extractor.normalizeSeedUrl('mailto:test@example.com'), null, 'Non-web URLs should be rejected');
   console.log('✅ Root-domain seed URL normalization tests passed');
+
+  console.log('--- 11. Testing Internal Network Crawl Protection ---');
+  const networkPolicy = new CrawlNetworkPolicy();
+  assert.strictEqual(isBlockedIpAddress('127.0.0.1'), true, 'IPv4 loopback must be blocked');
+  assert.strictEqual(isBlockedIpAddress('169.254.169.254'), true, 'Cloud metadata link-local IP must be blocked');
+  assert.strictEqual(isBlockedIpAddress('10.0.0.8'), true, 'Private IPv4 addresses must be blocked');
+  assert.strictEqual(isBlockedIpAddress('8.8.8.8'), false, 'Public IPv4 addresses must remain allowed');
+  assert.strictEqual(isBlockedIpAddress('::1'), true, 'IPv6 loopback must be blocked');
+  await assert.rejects(
+    networkPolicy.assertSafePublicUrl('http://127.0.0.1:3000/'),
+    /Private, loopback and internal network addresses cannot be crawled/,
+    'A local target must never be accepted as a crawl seed'
+  );
+  await assert.rejects(
+    networkPolicy.assertSafePublicUrl('http://localhost/'),
+    /Private, loopback and internal network addresses cannot be crawled/,
+    'localhost must never be accepted as a crawl seed'
+  );
+  const privateDnsPolicy = new CrawlNetworkPolicy({
+    lookup: async () => [{ address: '10.20.30.40', family: 4 }]
+  });
+  await assert.rejects(
+    privateDnsPolicy.assertSafePublicUrl('https://rebound.example/'),
+    /Private, loopback and internal network addresses cannot be crawled/,
+    'A hostname resolving to a private address must be blocked'
+  );
+  console.log('✅ Internal network protection tests passed');
 
   console.log('\n🎉 ALL AUTOMATED TESTS PASSED SUCCESSFULLY!');
 }

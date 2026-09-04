@@ -6,6 +6,7 @@ import { SiteCrawler } from './src/engine/crawler.js';
 import { Extractor } from './src/engine/extractor.js';
 import { Exporter } from './src/engine/exporter.js';
 import { crawlStorage } from './src/storage/database.js';
+import { CrawlNetworkPolicy, UnsafeCrawlTargetError } from './src/security/network-policy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,6 +41,7 @@ const MAX_SESSION_RECORDS = 100;
 const adminLoginAttempts = new Map();
 const adminSessions = new Map();
 const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://workva.co.za').replace(/\/$/, '');
+const crawlNetworkPolicy = new CrawlNetworkPolicy();
 
 function preventIndexing(req, res, next) {
   // robots.txt is advisory; this response header is the crawler-enforced layer.
@@ -520,7 +522,6 @@ app.post('/api/crawler/start', async (req, res) => {
       autoScroll = true,
       delayBetweenRequestsMs = 500,
       region = 'auto',
-      proxy = '',
       blockCrossDomainRedirects = true
     } = req.body || {};
 
@@ -528,8 +529,16 @@ app.post('/api/crawler/start', async (req, res) => {
     if (!seedUrl) {
       return res.status(400).json({ error: 'Enter a valid website address, such as graduateshub.org or https://graduateshub.org.' });
     }
+    try {
+      await crawlNetworkPolicy.assertSafePublicUrl(seedUrl);
+    } catch (error) {
+      const message = error instanceof UnsafeCrawlTargetError ? error.message : 'The target address could not be validated safely.';
+      return res.status(400).json({ error: message });
+    }
 
-    const cleanProxy = (proxy && typeof proxy === 'string') ? proxy.trim() || null : null;
+    if (typeof req.body?.proxy === 'string' && req.body.proxy.trim()) {
+      return res.status(400).json({ error: 'Custom proxy endpoints are disabled for security. CrawlLoom uses the hosting provider’s own network connection.' });
+    }
     const concurrency = Math.min(
       MAX_WORKERS_PER_CRAWL,
       boundedInteger(requestedConcurrency, 1, 1, MAX_WORKERS_PER_CRAWL)
@@ -553,8 +562,8 @@ app.post('/api/crawler/start', async (req, res) => {
       autoScroll,
       delayBetweenRequestsMs,
       region,
-      proxy: cleanProxy,
       blockCrossDomainRedirects,
+      networkPolicy: crawlNetworkPolicy,
       linkCheckConcurrency: LINK_CHECK_CONCURRENCY,
       linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
     });
@@ -813,7 +822,6 @@ app.post('/api/crawler/history/:crawlId/restore', async (req, res) => {
       customContentSelector: config.customContentSelector,
       respectRobotsTxt: config.respectRobotsTxt,
       region: config.region,
-      proxy: config.proxy,
       blockCrossDomainRedirects: config.blockCrossDomainRedirects
     });
     restoredCrawler.results = history.results;

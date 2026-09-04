@@ -6,6 +6,7 @@ import { Extractor } from './extractor.js';
 import { RobotsParser } from './robots.js';
 import { LinkStatusChecker } from './statusChecker.js';
 import { GEO_PRESETS, detectRegionFromUrl } from './geoPresets.js';
+import { CrawlNetworkPolicy, UnsafeCrawlTargetError } from '../security/network-policy.js';
 
 export class SiteCrawler extends EventEmitter {
   constructor(options = {}) {
@@ -27,8 +28,12 @@ export class SiteCrawler extends EventEmitter {
     
     // Regional Geo & Proxy configuration
     this.region = options.region || 'auto';
-    this.proxy = options.proxy || null;
+    // A request-supplied proxy would let an authenticated user route crawler
+    // traffic through an arbitrary network. CrawlLoom intentionally uses the
+    // hosting provider's own egress only.
+    this.proxy = null;
     this.blockCrossDomainRedirects = options.blockCrossDomainRedirects !== false;
+    this.networkPolicy = options.networkPolicy || new CrawlNetworkPolicy();
 
     // Custom content / SEO container selector
     this.customContentSelector = options.customContentSelector || options.kenticoSelector || '';
@@ -72,11 +77,13 @@ export class SiteCrawler extends EventEmitter {
       proxy: this.proxy,
       geo: this.geo,
       blockCrossDomainRedirects: this.blockCrossDomainRedirects,
-      targetHostname: this.baseHostname
+      targetHostname: this.baseHostname,
+      networkPolicy: this.networkPolicy
     });
 
     this.statusChecker = new LinkStatusChecker({
-      geo: this.geo
+      geo: this.geo,
+      networkPolicy: this.networkPolicy
     });
 
     // Crawl State
@@ -259,12 +266,33 @@ export class SiteCrawler extends EventEmitter {
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': `${geo.locale || 'en-US'},en;q=0.9`
     };
-    const response = await fetch(url, {
+    const { response, url: effectiveUrl } = await this.fetchPublicUrl(url, {
       headers,
-      redirect: 'follow',
       signal
     });
-    return { html: await response.text(), url: response.url || url };
+    return { html: await response.text(), url: effectiveUrl };
+  }
+
+  /** Fetch a page manually, validating the initial target and every redirect. */
+  async fetchPublicUrl(url, options = {}) {
+    let currentUrl = await this.networkPolicy.assertSafePublicUrl(url);
+    const maxRedirects = 10;
+    for (let hop = 0; hop <= maxRedirects; hop++) {
+      const response = await fetch(currentUrl, { ...options, redirect: 'manual' });
+      const location = response.headers.get('location');
+      if (![301, 302, 303, 307, 308].includes(response.status) || !location) {
+        return { response, url: currentUrl };
+      }
+      let destinationUrl;
+      try {
+        destinationUrl = new URL(location, currentUrl).toString();
+      } catch {
+        return { response, url: currentUrl };
+      }
+      response.body?.cancel?.().catch(() => {});
+      currentUrl = await this.networkPolicy.assertSafePublicUrl(destinationUrl);
+    }
+    throw new UnsafeCrawlTargetError('The website redirect chain exceeded the safe limit.');
   }
 
   static htmlPreview(html, maximumBytes = 2 * 1024 * 1024) {
@@ -284,10 +312,10 @@ export class SiteCrawler extends EventEmitter {
     const sourcePromise = this.fetchSourceSnapshot(url, AbortSignal.timeout(this.pageTimeoutMs)).catch(() => null);
     const inspectionBrowser = new BrowserManager({
       headless: true,
-      proxy: this.proxy,
       geo: this.geo,
       blockCrossDomainRedirects: this.blockCrossDomainRedirects,
-      targetHostname: this.baseHostname
+      targetHostname: this.baseHostname,
+      networkPolicy: this.networkPolicy
     });
     let pageContext = null;
     let renderedHtml = '';
@@ -298,6 +326,7 @@ export class SiteCrawler extends EventEmitter {
       await inspectionBrowser.init();
       pageContext = await inspectionBrowser.createPageContext();
       const { page } = pageContext;
+      await this.networkPolicy.assertSafePublicUrl(url);
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: this.pageTimeoutMs });
       await page.waitForFunction(() => {
         const bodyText = document.body?.innerText?.trim() || '';
@@ -343,7 +372,14 @@ export class SiteCrawler extends EventEmitter {
 
     const normalizedSeed = Extractor.normalizeUrl(this.seedUrl, this.seedUrl);
     if (!normalizedSeed) {
-      this.emit('error', { message: 'Invalid Seed URL' });
+      this.emitCrawlerError('Invalid Seed URL');
+      this.isRunning = false;
+      return;
+    }
+    try {
+      await this.networkPolicy.assertSafePublicUrl(normalizedSeed);
+    } catch (error) {
+      this.emitCrawlerError(error instanceof Error ? error.message : 'The target address is not safe to crawl.');
       this.isRunning = false;
       return;
     }
@@ -352,7 +388,7 @@ export class SiteCrawler extends EventEmitter {
     if (this.respectRobotsTxt) {
       try {
         this.emit('statusUpdate', { message: 'Fetching and evaluating robots.txt...' });
-        this.robotsParser = await RobotsParser.fetchForOrigin(normalizedSeed, 'Mozilla/5.0');
+        this.robotsParser = await RobotsParser.fetchForOrigin(normalizedSeed, 'Mozilla/5.0', this.networkPolicy);
       } catch (err) {
         console.warn('Could not fetch robots.txt:', err);
       }
@@ -388,7 +424,7 @@ export class SiteCrawler extends EventEmitter {
       console.error('Crawler execution error:', err);
       this.lastError = err.message;
       this.stats.errorsCount++;
-      this.emit('error', { message: err.message });
+      this.emitCrawlerError(err.message);
     } finally {
       this.stats.endTime = Date.now();
       this.isRunning = false;
@@ -490,9 +526,8 @@ export class SiteCrawler extends EventEmitter {
         headers['Client-IP'] = geo.ip;
       }
 
-      const response = await fetch(url, {
+      const { response, url: effectiveUrl } = await this.fetchPublicUrl(url, {
         headers,
-        redirect: 'follow',
         signal: this.getAbortSignal(this.pageTimeoutMs)
       });
 
@@ -502,7 +537,6 @@ export class SiteCrawler extends EventEmitter {
       crawlResult.statusText = response.statusText;
       crawlResult.responseTimeMs = Date.now() - pageStartTime;
 
-      const effectiveUrl = response.url || url;
       this.adoptSeedRedirect(effectiveUrl, depth);
       this.registerRedirectDestination(url, effectiveUrl);
 
@@ -677,6 +711,7 @@ export class SiteCrawler extends EventEmitter {
 
       let mainResponse = null;
       try {
+        await this.networkPolicy.assertSafePublicUrl(url);
         mainResponse = await page.goto(url, {
           waitUntil: 'domcontentloaded',
           timeout: this.pageTimeoutMs
@@ -804,17 +839,7 @@ export class SiteCrawler extends EventEmitter {
 
           // Evaluate queueing only if not in single-url mode and within depth limit
           if (this.crawlScope !== 'single-url' && depth < this.maxDepth && link.isValidHttp) {
-            const normalized = Extractor.normalizeUrl(link.url, this.baseOrigin);
-            if (normalized && this.isUrlAllowedInScope(normalized)) {
-              if (!this.visited.has(normalized) && !this.queued.has(normalized)) {
-                this.queued.add(normalized);
-                this.queue.push({
-                  url: normalized,
-                  depth: depth + 1,
-                  sourceUrl: url
-                });
-              }
-            }
+            this.addToQueue(link.url, depth + 1, crawlResult.url);
           }
         } else if (link.linkType === 'External') {
           externalCount++;
@@ -1001,6 +1026,12 @@ export class SiteCrawler extends EventEmitter {
     if (this.crawlScope === 'single-url' || depth > this.maxDepth) return false;
     const normalized = Extractor.normalizeUrl(targetUrl, this.baseOrigin);
     if (!normalized || !this.isUrlAllowedInScope(normalized)) return false;
+    try {
+      this.networkPolicy.assertStaticallySafeUrl(normalized);
+    } catch {
+      this.stats.excludedByRulesCount++;
+      return false;
+    }
     const effectiveUrl = this.redirectAliases.get(normalized) || normalized;
     if (this.visited.has(effectiveUrl) || this.queued.has(effectiveUrl)) return false;
 
@@ -1094,6 +1125,15 @@ export class SiteCrawler extends EventEmitter {
 
   isCancellationRequested() {
     return this.isCancelled || Boolean(this.abortController?.signal.aborted);
+  }
+
+  emitCrawlerError(message) {
+    this.lastError = message;
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', { message });
+    } else {
+      console.warn(`Crawler error: ${message}`);
+    }
   }
 
   getAbortSignal(timeoutMs) {
