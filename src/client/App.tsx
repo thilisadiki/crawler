@@ -79,6 +79,11 @@ export default function App() {
   const resourceCount = useMemo(() => crawler.pages.reduce((count, page) => count + (page.resources?.length || 0), 0), [crawler.pages]);
   const issueCount = useMemo(() => getSeoIssues(crawler.pages, crawler.links).length, [crawler.pages, crawler.links]);
   const errors = (crawler.stats.errorsCount || 0) + (crawler.stats.blockedByRobotsCount || 0);
+  const primaryAction = crawler.state === 'running'
+    ? { label: 'Ⅱ Pause crawl', action: 'pause' as const }
+    : crawler.state === 'paused'
+      ? { label: '▶ Resume crawl', action: 'resume' as const }
+      : { label: '▶ Execute crawl', action: 'start' as const };
 
   function update<K extends keyof CrawlConfig>(key: K, value: CrawlConfig[K]) {
     setConfig(current => ({ ...current, [key]: value }));
@@ -125,7 +130,7 @@ export default function App() {
             <label className="check"><input type="checkbox" checked={config.blockCrossDomainRedirects} disabled={running} onChange={event => update('blockCrossDomainRedirects', event.target.checked)} /> Lock target domain (block geo redirects)</label>
             <label className="check"><input type="checkbox" checked={config.respectRobotsTxt} disabled={running} onChange={event => update('respectRobotsTxt', event.target.checked)} /> Enforce robots.txt</label>
           </div>}
-          <div className="actions"><button className="primary" disabled={running}>▶ Execute crawl</button><button className="secondary" type="button" disabled={crawler.state !== 'running'} onClick={() => void crawler.run('pause')}>Ⅱ Pause</button><button className="secondary" type="button" disabled={crawler.state !== 'paused'} onClick={() => void crawler.run('resume')}>▶ Resume</button><button className="danger" type="button" disabled={!running || crawler.state === 'stopping'} onClick={() => void crawler.run('stop')}>■ Abort</button><button className="secondary" type="button" onClick={() => void crawler.run('reset')}>↻ Clear / reset</button></div>
+          <div className="actions"><button className="primary" type={primaryAction.action === 'start' ? 'submit' : 'button'} disabled={crawler.state === 'stopping'} onClick={primaryAction.action === 'start' ? undefined : () => void crawler.run(primaryAction.action)}>{primaryAction.label}</button><button className="danger" type="button" disabled={!running || crawler.state === 'stopping'} onClick={() => void crawler.run('stop')}>■ Abort</button><button className="secondary" type="button" onClick={() => void crawler.run('reset')}>↻ Clear / reset</button></div>
         </form>
         {crawler.error && <p className="error-message" role="alert">{crawler.error}</p>}
       </section>
