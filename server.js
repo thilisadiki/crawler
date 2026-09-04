@@ -37,13 +37,10 @@ const PRIVATE_ACCESS_CONFIGURED = Boolean(ADMIN_PASSWORD && ADMIN_SESSION_SECRET
 const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
 const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const CRAWL_START_MAX_ATTEMPTS = 8;
-const CRAWL_START_WINDOW_MS = 15 * 60 * 1000;
 const ACTIVE_SESSION_WINDOW_MS = 2 * 60 * 1000;
 const SESSION_ACTIVITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SESSION_RECORDS = 100;
 const adminLoginAttempts = new Map();
-const crawlStartAttempts = new Map();
 const adminSessions = new Map();
 const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://workva.co.za').replace(/\/$/, '');
 const crawlNetworkPolicy = new CrawlNetworkPolicy();
@@ -234,26 +231,6 @@ function requireSameOrigin(req, res, next) {
   const allowedOrigins = new Set([requestOrigin(req), PUBLIC_APP_URL]);
   if (!allowedOrigins.has(origin)) return res.status(403).json({ error: 'Cross-site requests are not allowed.' });
   return next();
-}
-
-function consumeRateLimit(store, key, maximum, windowMs) {
-  const now = Date.now();
-  const existing = store.get(key);
-  const record = !existing || existing.resetAt <= now
-    ? { count: 0, resetAt: now + windowMs }
-    : existing;
-  record.count++;
-  store.set(key, record);
-  return { allowed: record.count <= maximum, retryAfterSeconds: Math.max(1, Math.ceil((record.resetAt - now) / 1000)) };
-}
-
-function limitCrawlStarts(req, res, next) {
-  const adminSession = getAdminSession(req, false);
-  const key = `${adminSession?.id || 'unknown'}:${getClientIp(req)}`;
-  const rate = consumeRateLimit(crawlStartAttempts, key, CRAWL_START_MAX_ATTEMPTS, CRAWL_START_WINDOW_MS);
-  if (rate.allowed) return next();
-  res.setHeader('Retry-After', rate.retryAfterSeconds);
-  return res.status(429).json({ error: `Too many crawl starts. Try again in ${Math.ceil(rate.retryAfterSeconds / 60)} minute(s).` });
 }
 
 function requireDashboardAccess(req, res, next) {
@@ -538,7 +515,7 @@ app.get('/api/crawler/stream', (req, res) => {
 });
 
 // Start Crawl
-app.post('/api/crawler/start', limitCrawlStarts, async (req, res) => {
+app.post('/api/crawler/start', async (req, res) => {
   try {
     pruneCrawlerSessions();
     const { sessionId, crawler: existingCrawler } = getSessionCrawler(req);
