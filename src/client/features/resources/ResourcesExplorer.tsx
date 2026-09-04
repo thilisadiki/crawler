@@ -27,7 +27,7 @@ export function ResourcesExplorer({ pages, sharedSearch }: { pages: CrawlPage[];
   const [filter, setFilter] = useState<ResourceFilter>('all');
   const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'index', direction: 'asc' });
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(100);
+  const [pageSize, setPageSize] = useState(50);
   const [selected, setSelected] = useState<CrawledResource | null>(null);
   const resources = useMemo(() => {
     const seen = new Set<string>();

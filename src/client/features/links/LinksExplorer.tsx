@@ -25,7 +25,7 @@ export function LinksExplorer({ links, sharedSearch }: { links: CrawledLink[]; s
   const [filter, setFilter] = useState<LinkFilter>('all');
   const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'index', direction: 'asc' });
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(100);
+  const [pageSize, setPageSize] = useState(50);
   const [selected, setSelected] = useState<CrawledLink | null>(null);
   const counts = useMemo(() => ({
     all: links.length,

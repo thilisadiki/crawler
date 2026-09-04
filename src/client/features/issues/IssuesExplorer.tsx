@@ -8,7 +8,7 @@ export function IssuesExplorer({ pages, links, sharedSearch, onInspectPage }: { 
   const issues = useMemo(() => getSeoIssues(pages, links), [pages, links]);
   const [activeCode, setActiveCode] = useState('all');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(100);
+  const [pageSize, setPageSize] = useState(50);
   const grouped = useMemo(() => Array.from(issues.reduce((all, issue) => {
     const current = all.get(issue.code) || { issue, count: 0 };
     current.count++; all.set(issue.code, current); return all;
