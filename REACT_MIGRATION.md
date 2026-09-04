@@ -42,10 +42,14 @@ and can be reached through Express at `/next/`.
   filters; sortable columns; pagination; source-page context; and inspection.
 - SEO issue reporting with severity/category summaries, search, pagination,
   page inspection, and exact duplicate-content detection.
+- extracted-content explorer with rendered-text search, headings, full-text
+  copying, content-area labels, and pagination.
+- read-only crawl-history browser for the existing MySQL storage, including
+  saved crawl summaries and audited-page details.
 
 ## Remaining slices
 
-1. Extracted-content explorer, crawl history, and final accessibility/layout QA.
+1. Final accessibility/layout QA and parity review against the legacy dashboard.
 2. Move the React build from `/next/` to `/`, retain the legacy dashboard for
    one release as a rollback route, then retire it only after acceptance.
 

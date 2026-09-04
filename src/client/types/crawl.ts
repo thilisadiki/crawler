@@ -64,6 +64,7 @@ export interface CrawledResource {
 export interface CustomContent {
   detected?: boolean;
   selectorUsed?: string;
+  detectionMethod?: string;
   headings?: string[];
   textSnippet?: string;
   fullText?: string;
@@ -84,6 +85,9 @@ export interface CrawlPage {
   responseTimeMs?: number | null;
   wordCount?: number;
   totalWords?: number;
+  internalLinksCount?: number;
+  externalLinksCount?: number;
+  customLinksCount?: number;
   fullPageText?: string;
   error?: string;
   links?: CrawledLink[];
@@ -99,4 +103,20 @@ export interface CrawlerStatus {
   queueLength?: number;
   engine?: EngineStatus | null;
   capacity?: CrawlCapacity;
+}
+
+export interface CrawlHistoryRecord {
+  id: string;
+  seedUrl: string;
+  status: string;
+  stats: CrawlStats | null;
+  engine: EngineStatus | null;
+  createdAt: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
+}
+
+export interface CrawlHistoryDetail {
+  crawl: CrawlHistoryRecord & { config?: Record<string, unknown> };
+  results: CrawlPage[];
 }
