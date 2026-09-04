@@ -329,17 +329,76 @@ export class CrawlStorage {
       const [[linkCount]] = await connection.query('SELECT COUNT(*) AS total FROM crawl_links');
       const [[pageCount]] = await connection.query('SELECT COUNT(*) AS total FROM crawl_pages');
       const [[crawlCount]] = await connection.query('SELECT COUNT(*) AS total FROM crawl_runs');
+      const [[resourceCount]] = await connection.query('SELECT COALESCE(SUM(JSON_LENGTH(resources_json)), 0) AS total FROM crawl_pages');
       await connection.query('DELETE FROM crawl_links');
       await connection.query('DELETE FROM crawl_pages');
       await connection.query('DELETE FROM crawl_runs');
       await connection.commit();
-      return { crawls: crawlCount.total, pages: pageCount.total, links: linkCount.total };
+      return { crawls: crawlCount.total, pages: pageCount.total, links: linkCount.total, resources: resourceCount.total };
     } catch (error) {
       await connection.rollback().catch(() => {});
       throw error;
     } finally {
       connection.release();
     }
+  }
+
+  async getDatabaseOverview() {
+    if (!(await this.initialize()) || !this.pool) {
+      throw new Error('Persistent crawl history is not connected.');
+    }
+
+    const [[counts]] = await this.pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM crawl_runs) AS crawls,
+        (SELECT COUNT(*) FROM crawl_pages) AS pages,
+        (SELECT COUNT(*) FROM crawl_links) AS links,
+        (SELECT COALESCE(SUM(JSON_LENGTH(resources_json)), 0) FROM crawl_pages) AS resources,
+        (SELECT COALESCE(SUM(CHAR_LENGTH(full_page_text)), 0) FROM crawl_pages) AS fullPageTextChars,
+        (SELECT COALESCE(SUM(CHAR_LENGTH(custom_text)), 0) FROM crawl_pages) AS contentAreaTextChars,
+        (SELECT MIN(created_at) FROM crawl_runs) AS oldestCrawlAt,
+        (SELECT MAX(created_at) FROM crawl_runs) AS newestCrawlAt
+    `);
+    const [tables] = await this.pool.query(`
+      SELECT
+        table_name AS tableName,
+        COALESCE(table_rows, 0) AS estimatedRows,
+        COALESCE(data_length, 0) AS dataBytes,
+        COALESCE(index_length, 0) AS indexBytes,
+        COALESCE(data_length, 0) + COALESCE(index_length, 0) AS totalBytes
+      FROM information_schema.tables
+      WHERE table_schema = DATABASE()
+        AND table_name IN ('crawl_runs', 'crawl_pages', 'crawl_links')
+      ORDER BY table_name
+    `);
+    const [[latestCrawl]] = await this.pool.query(`
+      SELECT seed_url AS seedUrl, status, created_at AS createdAt, completed_at AS completedAt
+      FROM crawl_runs
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+
+    const totals = tables.reduce((sum, table) => ({
+      dataBytes: sum.dataBytes + Number(table.dataBytes || 0),
+      indexBytes: sum.indexBytes + Number(table.indexBytes || 0),
+      totalBytes: sum.totalBytes + Number(table.totalBytes || 0)
+    }), { dataBytes: 0, indexBytes: 0, totalBytes: 0 });
+
+    return {
+      database: process.env.DB_NAME || '',
+      counts: {
+        crawls: Number(counts.crawls || 0), pages: Number(counts.pages || 0), links: Number(counts.links || 0),
+        resources: Number(counts.resources || 0), fullPageTextChars: Number(counts.fullPageTextChars || 0),
+        contentAreaTextChars: Number(counts.contentAreaTextChars || 0)
+      },
+      dates: { oldestCrawlAt: counts.oldestCrawlAt || null, newestCrawlAt: counts.newestCrawlAt || null },
+      latestCrawl: latestCrawl || null,
+      tables: tables.map(table => ({
+        tableName: table.tableName, estimatedRows: Number(table.estimatedRows || 0), dataBytes: Number(table.dataBytes || 0),
+        indexBytes: Number(table.indexBytes || 0), totalBytes: Number(table.totalBytes || 0)
+      })),
+      totals
+    };
   }
 }
 

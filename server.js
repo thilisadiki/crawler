@@ -176,6 +176,16 @@ app.post('/api/admin/logout', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
+app.get('/api/admin/database-overview', requireAdmin, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const overview = await crawlStorage.getDatabaseOverview();
+    res.json({ storage: crawlStorage.getStatus(), ...overview });
+  } catch (error) {
+    res.status(503).json({ error: error.message, storage: crawlStorage.getStatus() });
+  }
+});
+
 app.post('/api/admin/crawl-history/clear', requireAdmin, async (req, res) => {
   try {
     if (runningCrawlers.size > 0) {
