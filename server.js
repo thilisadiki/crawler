@@ -59,9 +59,10 @@ app.use((req, res, next) => {
 });
 app.use(['/admin', '/api', '/next', '/legacy'], preventIndexing);
 
-// React is now the production dashboard. The prior implementation stays at
-// /legacy for one release as a deliberately non-indexable rollback route.
-app.get('/', requireDashboardAccess, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'next', 'index.html')));
+// The public homepage explains the product. The React dashboard is isolated
+// under /app so it can remain private and excluded from search indexes.
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'home.html')));
+app.get('/app', requireDashboardAccess, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'next', 'index.html')));
 app.get('/index.html', (req, res) => res.redirect(301, '/'));
 app.get('/legacy', requireDashboardAccess, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'index.html')));
 app.use('/next', requireDashboardAccess);
@@ -70,7 +71,7 @@ app.use(express.static(path.join(__dirname, 'src', 'public')));
 // Only public product and information pages are submitted to search engines.
 // Administration, API and preview routes are excluded above and in robots.txt.
 app.get('/robots.txt', (req, res) => {
-  res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api\nDisallow: /next\nDisallow: /legacy\n\nSitemap: ${PUBLIC_APP_URL}/sitemap.xml\n`);
+  res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /admin\nDisallow: /api\nDisallow: /next\nDisallow: /legacy\n\nSitemap: ${PUBLIC_APP_URL}/sitemap.xml\n`);
 });
 
 app.get('/sitemap.xml', (req, res) => {
@@ -209,13 +210,14 @@ function safeNextPath(value, fallback = '/') {
 }
 
 function requireDashboardAccess(req, res, next) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
   if (!PRIVATE_ACCESS_CONFIGURED) {
     return res.status(503).type('text/plain').send('CrawlLoom private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
   }
   if (!hasValidAdminSession(req)) {
     return res.redirect(`/admin/login?next=${encodeURIComponent(safeNextPath(req.originalUrl))}`);
   }
-  res.setHeader('Cache-Control', 'no-store');
   return next();
 }
 
@@ -242,7 +244,7 @@ function passwordsMatch(candidate) {
 // environment, and every data-changing endpoint requires its signed HTTP-only cookie.
 app.get('/admin/login', (req, res) => {
   if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).type('text/plain').send('Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
-  if (hasValidAdminSession(req)) return res.redirect(safeNextPath(req.query.next, '/'));
+  if (hasValidAdminSession(req)) return res.redirect(safeNextPath(req.query.next, '/app'));
   res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(path.join(__dirname, 'src', 'admin', 'login.html'));
 });

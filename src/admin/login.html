@@ -34,7 +34,7 @@
     const button = document.getElementById('submitButton');
     const message = document.getElementById('message');
     const requestedNext = new URLSearchParams(window.location.search).get('next');
-    const nextPath = requestedNext && requestedNext.startsWith('/') && !requestedNext.startsWith('//') && !requestedNext.includes('\\') ? requestedNext : '/';
+    const nextPath = requestedNext && requestedNext.startsWith('/') && !requestedNext.startsWith('//') && !requestedNext.includes('\\') ? requestedNext : '/app';
     form.addEventListener('submit', async event => {
       event.preventDefault();
       button.disabled = true;
