@@ -87,6 +87,9 @@ export class SiteCrawler extends EventEmitter {
     this.queue = [];
     this.visited = new Set();
     this.queued = new Set();
+    // Maps a requested URL to the URL reached after a redirect. It prevents a
+    // later navigation link to the final destination from being audited again.
+    this.redirectAliases = new Map();
     this.results = [];
     this.allLinks = [];
 
@@ -189,6 +192,18 @@ export class SiteCrawler extends EventEmitter {
       } catch {}
       return link;
     });
+  }
+
+  registerRedirectDestination(requestedUrl, effectiveUrl) {
+    const requested = Extractor.normalizeUrl(requestedUrl, this.baseOrigin);
+    const effective = Extractor.normalizeUrl(effectiveUrl, effectiveUrl);
+    if (!requested || !effective || requested === effective) return;
+    this.redirectAliases.set(requested, effective);
+    // The worker marked the requested URL as visited before fetching it. Mark
+    // the effective URL too, so a homepage link such as https://www.site.com/
+    // cannot produce a second audit after https://site.com/ redirected to it.
+    this.visited.add(effective);
+    this.queued.add(effective);
   }
 
   async start() {
@@ -361,6 +376,7 @@ export class SiteCrawler extends EventEmitter {
 
       const effectiveUrl = response.url || url;
       this.adoptSeedRedirect(effectiveUrl, depth);
+      this.registerRedirectDestination(url, effectiveUrl);
 
       const html = await response.text();
       if (this.isCancellationRequested()) return;
@@ -536,6 +552,7 @@ export class SiteCrawler extends EventEmitter {
 
       const effectiveUrl = page.url() || url;
       this.adoptSeedRedirect(effectiveUrl, depth);
+      this.registerRedirectDestination(url, effectiveUrl);
 
       if (mainResponse) {
         crawlResult.statusCode = mainResponse.status();
@@ -832,11 +849,12 @@ export class SiteCrawler extends EventEmitter {
     if (this.crawlScope === 'single-url' || depth > this.maxDepth) return false;
     const normalized = Extractor.normalizeUrl(targetUrl, this.baseOrigin);
     if (!normalized || !this.isUrlAllowedInScope(normalized)) return false;
-    if (this.visited.has(normalized) || this.queued.has(normalized)) return false;
+    const effectiveUrl = this.redirectAliases.get(normalized) || normalized;
+    if (this.visited.has(effectiveUrl) || this.queued.has(effectiveUrl)) return false;
 
-    this.queued.add(normalized);
+    this.queued.add(effectiveUrl);
     this.queue.push({
-      url: normalized,
+      url: effectiveUrl,
       depth,
       sourceUrl
     });

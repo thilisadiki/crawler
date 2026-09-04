@@ -120,6 +120,13 @@ async function runTests() {
     false,
     'A cross-site redirect must never expand the crawl scope'
   );
+  redirectScopeCrawler.visited.add('https://example.co.za/');
+  redirectScopeCrawler.registerRedirectDestination('https://example.co.za/', 'https://www.example.co.za/');
+  assert.strictEqual(
+    redirectScopeCrawler.addToQueue('https://www.example.co.za/', 1, 'https://www.example.co.za/'),
+    false,
+    'The final URL of an already-audited redirect must not be queued a second time'
+  );
   const normalizedAliases = redirectScopeCrawler.normalizeInternalLinkAliases([{
     url: 'https://example.co.za/contact', linkType: 'External', isInternal: false, isValidHttp: true
   }]);
