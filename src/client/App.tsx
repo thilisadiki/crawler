@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { crawlerClient } from './api/crawler-client';
 import { useCrawler } from './features/crawl/useCrawler';
 import { LinksExplorer } from './features/links/LinksExplorer';
@@ -37,6 +37,13 @@ function contentFound(page: CrawlPage) {
 function formatBytes(value?: number) {
   if (!value) return '—';
   return value >= 1024 * 1024 ? `${(value / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(value / 1024)} KB`;
+}
+
+function formatDuration(startTime?: number, endTime?: number | null) {
+  if (!startTime || !endTime) return '';
+  const seconds = Math.max(0, Math.round((endTime - startTime) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function PageInspector({ page, onClose }: { page: CrawlPage; onClose: () => void }) {
@@ -102,6 +109,9 @@ export default function App() {
   const [selectedPage, setSelectedPage] = useState<CrawlPage | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [explorerView, setExplorerView] = useState<'pages' | 'links' | 'resources' | 'issues' | 'content' | 'history'>('pages');
+  const [completionNotice, setCompletionNotice] = useState<string | null>(null);
+  const completionNotificationEligible = useRef(false);
+  const notifiedCompletion = useRef<number | null>(null);
   const running = crawler.state === 'running' || crawler.state === 'paused' || crawler.state === 'stopping';
   const maxWorkers = crawler.capacity?.maxWorkersPerCrawl || 1;
   const unlimitedSafetyCap = crawler.capacity?.maxUnlimitedCrawlPages || 50000;
@@ -109,6 +119,24 @@ export default function App() {
   const crawlSlotLabel = availableCrawlSlots === undefined
     ? 'Checking crawl capacity…'
     : `${availableCrawlSlots} crawl slot${availableCrawlSlots === 1 ? '' : 's'} free`;
+  useEffect(() => {
+    const completedAt = crawler.stats.endTime;
+    const pageCount = crawler.stats.pagesCrawled || 0;
+    if (!completionNotificationEligible.current || crawler.state !== 'completed' || pageCount < 50 || !completedAt || notifiedCompletion.current === completedAt) return;
+    notifiedCompletion.current = completedAt;
+    completionNotificationEligible.current = false;
+    const duration = formatDuration(crawler.stats.startTime, completedAt);
+    const message = `Audit complete: ${pageCount.toLocaleString()} pages${duration ? ` in ${duration}` : ''}.`;
+    setCompletionNotice(message);
+    if ('Notification' in window && window.Notification.permission === 'granted') {
+      new window.Notification('CrawlLoom audit complete', { body: message, tag: `crawlloom-audit-${completedAt}` });
+    }
+  }, [crawler.state, crawler.stats.endTime, crawler.stats.pagesCrawled, crawler.stats.startTime]);
+  useEffect(() => {
+    if (!completionNotice) return;
+    const timeout = window.setTimeout(() => setCompletionNotice(null), 12000);
+    return () => window.clearTimeout(timeout);
+  }, [completionNotice]);
   const pages = useMemo(() => crawler.pages.filter(page => {
     const query = search.trim().toLowerCase();
     const searchable = `${page.url} ${page.title || ''} ${page.statusCode || ''}`.toLowerCase();
@@ -151,6 +179,10 @@ export default function App() {
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
+    completionNotificationEligible.current = true;
+    if ((config.noPageLimit || config.maxPages >= 50) && 'Notification' in window && window.Notification.permission === 'default') {
+      void window.Notification.requestPermission();
+    }
     await crawler.run('start', config);
   }
 
@@ -179,7 +211,7 @@ export default function App() {
             <label className="check"><input type="checkbox" checked={config.blockCrossDomainRedirects} disabled={running} onChange={event => update('blockCrossDomainRedirects', event.target.checked)} /> Lock target domain (block geo redirects)</label>
             <label className="check"><input type="checkbox" checked={config.respectRobotsTxt} disabled={running} onChange={event => update('respectRobotsTxt', event.target.checked)} /> Enforce robots.txt</label>
           </div>}
-          <div className="actions"><button className="primary" type={primaryAction.action === 'start' ? 'submit' : 'button'} disabled={crawler.state === 'stopping'} onClick={primaryAction.action === 'start' ? undefined : () => void crawler.run(primaryAction.action)}>{primaryAction.label}</button><button className="danger" type="button" disabled={!running || crawler.state === 'stopping'} onClick={() => void crawler.run('stop')}>■ Abort</button><button className="secondary" type="button" onClick={() => void crawler.run('reset')}>↻ Clear / reset</button></div>
+          <div className="actions"><button className="primary" type={primaryAction.action === 'start' ? 'submit' : 'button'} disabled={crawler.state === 'stopping'} onClick={primaryAction.action === 'start' ? undefined : () => void crawler.run(primaryAction.action)}>{primaryAction.label}</button><button className="danger" type="button" disabled={!running || crawler.state === 'stopping'} onClick={() => { completionNotificationEligible.current = false; void crawler.run('stop'); }}>■ Abort</button><button className="secondary" type="button" onClick={() => { completionNotificationEligible.current = false; void crawler.run('reset'); }}>↻ Clear / reset</button></div>
         </form>
         {crawler.error && <p className="error-message" role="alert">{crawler.error}</p>}
       </section>
@@ -199,6 +231,7 @@ export default function App() {
         {explorerView === 'pages' ? <><div className="table-wrap"><table><thead><tr><th>#</th><th>Status</th><th>URL</th><th>Title</th><th>Content area</th><th>Links</th><th>Latency</th><th /></tr></thead><tbody>{visiblePages.length ? visiblePages.map((page, index) => <tr key={page.url}><td>{(currentResultPage - 1) * pageSize + index + 1}</td><td><span className={page.statusCode === 200 ? 'code success' : 'code failure'}>{page.statusCode ?? '—'}</span></td><td className="url"><a href={page.url} target="_blank" rel="noreferrer">{page.url}</a></td><td>{page.title || '—'}</td><td><span className={contentFound(page) ? 'tag positive' : 'tag neutral'}>{contentFound(page) ? `Found (${page.customContent?.wordCount || 0}w)` : 'None'}</span></td><td>{page.links?.length || 0}</td><td>{page.responseTimeMs ? `${page.responseTimeMs}ms` : '—'}</td><td><button className="inspect" onClick={() => setSelectedPage(page)}>Inspect</button></td></tr>) : <tr><td colSpan={8} className="empty">No audited pages match these filters.</td></tr>}</tbody></table></div>{pages.length > 0 && <div className="pagination"><span>Showing {(currentResultPage - 1) * pageSize + 1}–{Math.min(currentResultPage * pageSize, pages.length)} of {pages.length.toLocaleString()}</span><label>Rows <select value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPageNumber(1); }}><option value="50">50</option><option value="100">100</option><option value="250">250</option></select></label><button className="secondary" disabled={currentResultPage === 1} onClick={() => setPageNumber(current => current - 1)}>Previous</button><span>Page {currentResultPage} of {totalResultPages}</span><button className="secondary" disabled={currentResultPage === totalResultPages} onClick={() => setPageNumber(current => current + 1)}>Next</button></div>}</> : explorerView === 'links' ? <LinksExplorer links={crawler.links} sharedSearch={search} /> : explorerView === 'resources' ? <ResourcesExplorer pages={crawler.pages} sharedSearch={search} /> : explorerView === 'issues' ? <IssuesExplorer pages={crawler.pages} links={crawler.links} sharedSearch={search} onInspectPage={url => { const target = crawler.pages.find(page => page.url === url); if (target) setSelectedPage(target); }} /> : explorerView === 'content' ? <ContentExplorer pages={crawler.pages} sharedSearch={search} /> : <HistoryExplorer onRestore={async crawlId => { const restored = await crawler.restoreHistory(crawlId); setConfig(current => ({ ...current, ...(restored.crawl.config || {}), seedUrl: restored.crawl.seedUrl })); setExplorerView('pages'); }} />}
       </section>
     </main>
+    {completionNotice && <div className="completion-notice" role="status"><strong>✓ Crawl finished</strong><span>{completionNotice}</span><button className="icon-button" onClick={() => setCompletionNotice(null)} aria-label="Dismiss crawl completion notification">×</button></div>}
     {selectedPage && <PageInspector page={selectedPage} onClose={() => setSelectedPage(null)} />}
   </div>;
 }

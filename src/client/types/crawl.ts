@@ -27,6 +27,8 @@ export interface CrawlStats {
   errorsCount?: number;
   blockedByRobotsCount?: number;
   customDetectedCount?: number;
+  startTime?: number;
+  endTime?: number | null;
 }
 
 export interface CrawlCapacity {
