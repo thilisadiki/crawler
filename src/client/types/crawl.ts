@@ -35,9 +35,15 @@ export interface EngineStatus {
 }
 
 export interface CrawledLink {
-  url: string;
+  url?: string;
+  targetUrl?: string;
+  rawHref?: string;
   anchorText?: string;
   linkType?: string;
+  isInternal?: boolean;
+  rel?: string;
+  target?: string;
+  sourceUrl?: string;
   statusCode?: number | null;
   isNofollow?: boolean;
   isInsideCustom?: boolean;

@@ -1,4 +1,4 @@
-import type { CrawlConfig, CrawlerStatus, CrawlPage } from '../types/crawl';
+import type { CrawlConfig, CrawlerStatus, CrawlPage, CrawledLink } from '../types/crawl';
 
 // Reuses the established tab session key, so opening /next/ in the same browser
 // tab resumes the exact crawl rather than silently creating a second one.
@@ -32,6 +32,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const crawlerClient = {
   status: () => request<CrawlerStatus>('/api/crawler/status'),
   results: () => request<{ results: CrawlPage[] }>('/api/crawler/results'),
+  links: () => request<{ links: CrawledLink[] }>('/api/crawler/links'),
   start: (config: CrawlConfig) => request<{ success: boolean }>('/api/crawler/start', { method: 'POST', body: JSON.stringify(config) }),
   pause: () => request<{ success: boolean }>('/api/crawler/pause', { method: 'POST', body: '{}' }),
   resume: () => request<{ success: boolean }>('/api/crawler/resume', { method: 'POST', body: '{}' }),

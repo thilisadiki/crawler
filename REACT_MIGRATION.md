@@ -35,14 +35,16 @@ and can be reached through Express at `/next/`.
 - target/scope, page-limit, and advanced execution controls;
 - start, pause, resume, abort, clear/reset, capacity, and engine status;
 - summary metrics, pages search/filtering, page inspection, and all exports.
+- discovered-links table backed by the canonical crawler link records, with
+  internal/external/content-area/status/nofollow filters, column sorting,
+  pagination, and link inspection.
 
 ## Remaining slices
 
-1. Links table, filters, sorting, pagination, and link inspection.
-2. Resources inventory with status/type filters and sorting.
-3. SEO issues, including duplicate-content grouping and export parity.
-4. Extracted-content explorer, crawl history, and final accessibility/layout QA.
-5. Move the React build from `/next/` to `/`, retain the legacy dashboard for
+1. Resources inventory with status/type filters and sorting.
+2. SEO issues, including duplicate-content grouping and export parity.
+3. Extracted-content explorer, crawl history, and final accessibility/layout QA.
+4. Move the React build from `/next/` to `/`, retain the legacy dashboard for
    one release as a rollback route, then retire it only after acceptance.
 
 The API contract stays stable across each slice. A deployment happens only as
