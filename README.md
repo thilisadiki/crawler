@@ -35,6 +35,7 @@ The dashboard is designed for on-demand audits. Each browser tab receives its ow
 - Supports multiple simultaneous user sessions while keeping crawl state isolated per browser tab.
 - Persists crawl runs, page results, links, and extracted text to MySQL when database credentials are configured.
 - Paginates large result sets (100 page/link rows and 10 text cards by default) so 1,000+ page audits stay responsive.
+- Includes public About, Privacy, Terms, and Acceptable Use pages linked from the dashboard footer.
 
 ## Architecture
 

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="About OmniCrawl, a browser-based SEO crawler for modern, JavaScript-rendered websites.">
+  <title>About OmniCrawl</title>
+  <link rel="stylesheet" href="/info/info.css">
+</head>
+<body>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/">Omni<span>Crawl</span></a><a class="back-link" href="/">← Back to crawler</a></div></header>
+  <main>
+    <p class="eyebrow">About</p>
+    <h1>SEO audits for websites that render in the browser.</h1>
+    <p class="lede">OmniCrawl is a browser-based crawler built to inspect modern websites, including pages whose meaningful content appears only after JavaScript runs.</p>
+    <section class="card">
+      <h2>What it does</h2>
+      <p>OmniCrawl renders a target page in Chromium where available, then extracts page text, metadata, headings, links, status information, and content-area findings. It can also fall back to direct HTML extraction where browser rendering is unavailable.</p>
+    </section>
+    <section class="card">
+      <h2>Designed for content audits</h2>
+      <p>The crawler is especially useful for checking dynamically generated editorial content, including content published through CMS platforms such as Kentico. Its content-area detection supports known selectors and a text-focused heuristic for pages with differing layouts.</p>
+    </section>
+    <section class="card">
+      <h2>How results are handled</h2>
+      <p>Each browser tab has its own crawl session. Completed crawl history can be stored in the deployment's configured MySQL database, exported as CSV or Excel, and managed by an authorised administrator.</p>
+    </section>
+  </main>
+  <footer class="site-footer"><span>© 2026 OmniCrawl</span><nav class="site-nav"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable Use</a></nav></footer>
+</body>
+</html>

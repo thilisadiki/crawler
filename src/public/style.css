@@ -72,6 +72,24 @@ body {
   gap: 20px;
 }
 
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0 12px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.app-footer nav { display: flex; flex-wrap: wrap; gap: 14px; }
+.app-footer a { color: var(--text-secondary); text-decoration: none; }
+.app-footer a:hover { color: var(--primary); text-decoration: underline; }
+
+@media (max-width: 680px) {
+  .app-footer { align-items: flex-start; flex-direction: column; }
+}
+
 /* Top Navigation */
 .top-nav {
   display: flex;

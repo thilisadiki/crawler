@@ -32,6 +32,15 @@ const adminLoginAttempts = new Map();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'src', 'public')));
 
+function sendInformationPage(filename) {
+  return (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'info', filename));
+}
+
+app.get('/about', sendInformationPage('about.html'));
+app.get('/privacy', sendInformationPage('privacy.html'));
+app.get('/terms', sendInformationPage('terms.html'));
+app.get('/acceptable-use', sendInformationPage('acceptable-use.html'));
+
 // Database persistence is optional locally, but enabled automatically when the
 // Hostinger database environment variables are configured.
 crawlStorage.initialize().catch(() => {});
