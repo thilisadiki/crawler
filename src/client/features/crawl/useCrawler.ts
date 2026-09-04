@@ -55,6 +55,9 @@ export function useCrawler() {
     eventSource.addEventListener('started', () => void sync());
     eventSource.addEventListener('completed', () => void sync());
     eventSource.addEventListener('stopped', () => void sync());
+    eventSource.addEventListener('revoked', () => {
+      setState('ready'); setError('This dashboard session was revoked by an administrator.');
+    });
     eventSource.addEventListener('reset', receiveReset);
     // Hostinger proxies can temporarily buffer SSE. Polling keeps this UI live then.
     const poller = window.setInterval(() => void sync().catch(() => {}), 2000);

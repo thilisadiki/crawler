@@ -31,7 +31,11 @@ const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
 const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
 const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const ACTIVE_SESSION_WINDOW_MS = 2 * 60 * 1000;
+const SESSION_ACTIVITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_SESSION_RECORDS = 100;
 const adminLoginAttempts = new Map();
+const adminSessions = new Map();
 const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://workva.co.za').replace(/\/$/, '');
 
 function preventIndexing(req, res, next) {
@@ -81,6 +85,7 @@ app.get('/acceptable-use', sendInformationPage('acceptable-use.html'));
 crawlStorage.initialize().catch(() => {});
 
 const crawlerSessions = new Map();
+const dashboardSessions = new Map();
 const runningCrawlers = new Set();
 let sseClients = [];
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
@@ -104,12 +109,49 @@ function signAdminPayload(payload) {
   return createHmac('sha256', ADMIN_SESSION_SECRET).update(payload).digest('base64url');
 }
 
-function createAdminSession() {
-  const payload = Buffer.from(JSON.stringify({ exp: Date.now() + ADMIN_SESSION_TTL_MS })).toString('base64url');
+function getClientIp(req) {
+  const forwarded = req.get('x-forwarded-for');
+  return (forwarded ? forwarded.split(',')[0] : req.ip || req.socket.remoteAddress || 'Unknown').trim();
+}
+
+function describeDevice(userAgent = '') {
+  const browser = /Edg\//.test(userAgent) ? 'Microsoft Edge' : /Firefox\//.test(userAgent) ? 'Firefox' : /Chrome\//.test(userAgent) ? 'Chrome' : /Safari\//.test(userAgent) ? 'Safari' : 'Unknown browser';
+  const device = /iPhone/.test(userAgent) ? 'iPhone' : /iPad/.test(userAgent) ? 'iPad' : /Android/.test(userAgent) ? 'Android device' : /Windows/.test(userAgent) ? 'Windows device' : /Macintosh/.test(userAgent) ? 'Mac' : /Linux/.test(userAgent) ? 'Linux device' : 'Unknown device';
+  return `${browser} on ${device}`;
+}
+
+function pruneSessionRecords() {
+  const cutoff = Date.now() - SESSION_ACTIVITY_RETENTION_MS;
+  for (const sessions of [adminSessions, dashboardSessions]) {
+    for (const [id, record] of sessions) {
+      if ((record.lastSeenAt || record.createdAt) < cutoff) sessions.delete(id);
+    }
+    if (sessions.size > MAX_SESSION_RECORDS) {
+      [...sessions.entries()]
+        .sort(([, a], [, b]) => (a.lastSeenAt || a.createdAt) - (b.lastSeenAt || b.createdAt))
+        .slice(0, sessions.size - MAX_SESSION_RECORDS)
+        .forEach(([id]) => sessions.delete(id));
+    }
+  }
+}
+
+function createAdminSession(req) {
+  pruneSessionRecords();
+  const id = randomUUID();
+  const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
+  adminSessions.set(id, {
+    id,
+    createdAt: Date.now(),
+    lastSeenAt: Date.now(),
+    expiresAt,
+    ip: getClientIp(req),
+    userAgent: req.get('user-agent') || 'Unknown user agent'
+  });
+  const payload = Buffer.from(JSON.stringify({ id, exp: expiresAt })).toString('base64url');
   return `${payload}.${signAdminPayload(payload)}`;
 }
 
-function hasValidAdminSession(req) {
+function getAdminSession(req, touch = true) {
   if (!ADMIN_PASSWORD || !ADMIN_SESSION_SECRET) return false;
   const token = parseCookies(req).omnicrawl_admin;
   if (!token) return false;
@@ -120,11 +162,18 @@ function hasValidAdminSession(req) {
   const receivedBuffer = Buffer.from(signature);
   if (expectedBuffer.length !== receivedBuffer.length || !timingSafeEqual(expectedBuffer, receivedBuffer)) return false;
   try {
-    const { exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    return Number.isFinite(exp) && exp > Date.now();
+    const { id, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    const session = typeof id === 'string' ? adminSessions.get(id) : null;
+    if (!session || session.revokedAt || session.endedAt || !Number.isFinite(exp) || exp <= Date.now() || session.expiresAt <= Date.now()) return false;
+    if (touch) session.lastSeenAt = Date.now();
+    return session;
   } catch {
     return false;
   }
+}
+
+function hasValidAdminSession(req) {
+  return Boolean(getAdminSession(req));
 }
 
 function isSecureRequest(req) {
@@ -201,11 +250,13 @@ app.post('/api/admin/login', (req, res) => {
   }
   adminLoginAttempts.delete(key);
   res.setHeader('Cache-Control', 'no-store');
-  res.cookie('omnicrawl_admin', createAdminSession(), adminCookieOptions(req));
+  res.cookie('omnicrawl_admin', createAdminSession(req), adminCookieOptions(req));
   return res.json({ success: true });
 });
 
 app.post('/api/admin/logout', requireAdmin, (req, res) => {
+  const session = getAdminSession(req, false);
+  if (session) session.endedAt = Date.now();
   res.clearCookie('omnicrawl_admin', adminCookieOptions(req));
   res.json({ success: true });
 });
@@ -236,9 +287,53 @@ app.post('/api/admin/crawl-history/clear', requireAdmin, async (req, res) => {
   }
 });
 
+app.get('/api/admin/sessions', requireAdmin, (req, res) => {
+  pruneSessionRecords();
+  const currentAdminSession = getAdminSession(req, false);
+  const sessions = [
+    ...[...adminSessions.values()].map(session => serializeSession(session, 'Administrator', currentAdminSession?.id)),
+    ...[...dashboardSessions.values()].map(session => serializeSession(session, 'Dashboard', currentAdminSession?.id))
+  ].sort((a, b) => new Date(b.lastSeenAt).getTime() - new Date(a.lastSeenAt).getTime());
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ sessions, activeWindowSeconds: ACTIVE_SESSION_WINDOW_MS / 1000, retentionDays: SESSION_ACTIVITY_RETENTION_MS / (24 * 60 * 60 * 1000) });
+});
+
+app.post('/api/admin/sessions/:sessionId/revoke', requireAdmin, (req, res) => {
+  const sessionId = req.params.sessionId;
+  if (!/^[a-zA-Z0-9_-]{8,128}$/.test(sessionId)) return res.status(400).json({ error: 'Invalid session identifier.' });
+  const currentAdminSession = getAdminSession(req, false);
+  const adminSession = adminSessions.get(sessionId);
+  if (adminSession) {
+    if (adminSession.id === currentAdminSession?.id) return res.status(400).json({ error: 'Use Sign out to end your current administrator session.' });
+    adminSession.revokedAt = Date.now();
+    return res.json({ success: true, type: 'Administrator' });
+  }
+  if (revokeDashboardSession(sessionId)) return res.json({ success: true, type: 'Dashboard' });
+  return res.status(404).json({ error: 'That session is no longer available.' });
+});
+
 function getSessionId(req) {
   const candidate = req.get('x-crawler-session') || req.query.sessionId || req.body?.sessionId || 'default';
   return /^[a-zA-Z0-9_-]{8,128}$/.test(candidate) ? candidate : 'default';
+}
+
+function trackDashboardSession(req, res, next) {
+  pruneSessionRecords();
+  const sessionId = getSessionId(req);
+  const existing = dashboardSessions.get(sessionId);
+  if (existing?.revokedAt) {
+    return res.status(403).json({ error: 'This dashboard session has been revoked by an administrator.' });
+  }
+  const now = Date.now();
+  dashboardSessions.set(sessionId, existing || {
+    id: sessionId,
+    createdAt: now,
+    lastSeenAt: now,
+    ip: getClientIp(req),
+    userAgent: req.get('user-agent') || 'Unknown user agent'
+  });
+  dashboardSessions.get(sessionId).lastSeenAt = now;
+  return next();
 }
 
 function getSessionCrawler(req) {
@@ -246,6 +341,41 @@ function getSessionCrawler(req) {
   const record = crawlerSessions.get(sessionId);
   if (record) record.updatedAt = Date.now();
   return { sessionId, crawler: record?.crawler || null };
+}
+
+function serializeSession(record, type, currentAdminSessionId) {
+  const now = Date.now();
+  const status = record.revokedAt ? 'Revoked' : record.endedAt ? 'Signed out' : now - record.lastSeenAt <= ACTIVE_SESSION_WINDOW_MS ? 'Active' : 'Recent';
+  return {
+    id: record.id,
+    idDisplay: `${record.id.slice(0, 8)}…${record.id.slice(-4)}`,
+    type,
+    status,
+    current: type === 'Administrator' && record.id === currentAdminSessionId,
+    device: describeDevice(record.userAgent),
+    ip: record.ip || 'Unknown',
+    createdAt: new Date(record.createdAt).toISOString(),
+    lastSeenAt: new Date(record.lastSeenAt).toISOString(),
+    revokedAt: record.revokedAt ? new Date(record.revokedAt).toISOString() : null
+  };
+}
+
+function revokeDashboardSession(sessionId) {
+  const record = dashboardSessions.get(sessionId);
+  if (!record) return false;
+  record.revokedAt = Date.now();
+  const crawlerRecord = crawlerSessions.get(sessionId);
+  if (crawlerRecord?.crawler?.isRunning) crawlerRecord.crawler.stop();
+  crawlerSessions.delete(sessionId);
+  const clientsToClose = sseClients.filter(client => client.sessionId === sessionId);
+  sseClients = sseClients.filter(client => client.sessionId !== sessionId);
+  clientsToClose.forEach(client => {
+    try {
+      client.res.write(`event: revoked\ndata: ${JSON.stringify({ message: 'This dashboard session was revoked by an administrator.' })}\n\n`);
+      client.res.end();
+    } catch {}
+  });
+  return true;
 }
 
 function pruneCrawlerSessions() {
@@ -280,6 +410,8 @@ function getCrawlCapacity() {
     linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
   };
 }
+
+app.use('/api/crawler', trackDashboardSession);
 
 function broadcastSSE(sessionId, eventType, data) {
   const record = crawlerSessions.get(sessionId);
