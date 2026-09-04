@@ -37,7 +37,8 @@ export class Exporter {
    * Generates a comprehensive Multi-Sheet Excel Workbook (.xlsx)
    * Sheet 1: Master Overview of all pages
    * Sheet 2: Master All Discovered Links
-   * Sheet 3..N: Dedicated sheet for EVERY individual page (SEO copy, metadata, and page links)
+   * Sheet 3: Detected SEO issues
+   * Sheet 4..N: Dedicated sheet for EVERY individual page (SEO copy, metadata, and page links)
    */
   static async generateMultiSheetWorkbook(results, allLinks = []) {
     const workbook = new ExcelJS.Workbook();
@@ -180,7 +181,43 @@ export class Exporter {
     });
 
     // -------------------------------------------------------------
-    // SHEET 3..N: Dedicated Sheet for Every Individual Crawled Page
+    // SHEET 3: Detected SEO Issues
+    // -------------------------------------------------------------
+    const issuesSheet = workbook.addWorksheet('SEO Issues', {
+      views: [{ state: 'frozen', ySplit: 1 }]
+    });
+
+    issuesSheet.columns = [
+      { header: '#', key: 'id', width: 6 },
+      { header: 'Severity', key: 'severity', width: 16 },
+      { header: 'Issue', key: 'label', width: 28 },
+      { header: 'Issue Code', key: 'code', width: 28 },
+      { header: 'URL', key: 'url', width: 52 },
+      { header: 'Details', key: 'detail', width: 68 }
+    ];
+
+    const headerRow3 = issuesSheet.getRow(1);
+    headerRow3.height = 28;
+    headerRow3.eachCell(cell => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFB91C1C' } };
+      cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+
+    this.getSEOIssues(results, allLinks).forEach((issue, idx) => {
+      const row = issuesSheet.addRow({ id: idx + 1, ...issue });
+      row.getCell('id').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('severity').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('detail').alignment = { vertical: 'middle', wrapText: true };
+      if (idx % 2 === 1) {
+        row.eachCell(cell => {
+          if (!cell.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF7ED' } };
+        });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // SHEET 4..N: Dedicated Sheet for Every Individual Crawled Page
     // -------------------------------------------------------------
     results.forEach((pageResult, idx) => {
       const sheetName = this.getSafeSheetName(pageResult.url, idx);
@@ -322,6 +359,117 @@ export class Exporter {
     });
 
     return await workbook.xlsx.writeBuffer();
+  }
+
+  /**
+   * Build the same SEO issue records shown in the dashboard, so exports remain
+   * useful outside the browser and do not depend on a rendered UI.
+   */
+  static getSEOIssues(results = [], allLinks = []) {
+    const definitions = [
+      ['page-error', 'Critical', 'Crawl error', 'The page returned an error or could not be crawled.'],
+      ['broken-internal-link', 'Critical', 'Broken internal link', 'An internal link points to a page that failed.'],
+      ['missing-title', 'Warning', 'Missing page title', 'Search results need a descriptive title.'],
+      ['duplicate-title', 'Warning', 'Duplicate page title', 'Multiple pages use the same title.'],
+      ['title-too-short', 'Opportunity', 'Title is too short', 'Title is under 30 characters.'],
+      ['title-too-long', 'Opportunity', 'Title is too long', 'Title is over 60 characters.'],
+      ['missing-description', 'Warning', 'Missing meta description', 'The page has no meta description.'],
+      ['duplicate-description', 'Warning', 'Duplicate meta description', 'Multiple pages use the same meta description.'],
+      ['description-too-short', 'Opportunity', 'Meta description is too short', 'Description is under 70 characters.'],
+      ['description-too-long', 'Opportunity', 'Meta description is too long', 'Description is over 160 characters.'],
+      ['missing-h1', 'Warning', 'Missing H1', 'The page has no H1 heading.'],
+      ['multiple-h1', 'Opportunity', 'Multiple H1 headings', 'The page has more than one H1.'],
+      ['missing-canonical', 'Opportunity', 'Missing canonical', 'No canonical URL was found.'],
+      ['canonical-mismatch', 'Warning', 'Canonical points elsewhere', 'The canonical URL differs from the crawled page.'],
+      ['noindex', 'Opportunity', 'Noindex directive', 'The page asks search engines not to index it.'],
+      ['thin-content', 'Opportunity', 'Thin content', 'The page has fewer than 300 extracted words.']
+    ];
+    const groups = new Map(definitions.map(([code, severity, label, description]) => [code, { code, severity, label, description, items: [] }]));
+    const add = (code, page, detail) => groups.get(code)?.items.push({ url: page.url, detail });
+    const titleMap = new Map();
+    const descriptionMap = new Map();
+
+    for (const page of results) {
+      if (page.statusCode >= 400 || page.error) add('page-error', page, page.error || `Returned HTTP ${page.statusCode}.`);
+      if (page.statusCode !== 200) continue;
+
+      const title = (page.title || '').trim();
+      if (!title) add('missing-title', page, 'No title tag was extracted.');
+      else {
+        if (title.length < 30) add('title-too-short', page, `${title.length} characters: “${title}”`);
+        if (title.length > 60) add('title-too-long', page, `${title.length} characters: “${title.slice(0, 100)}”`);
+        const matchingTitles = titleMap.get(title.toLowerCase()) || [];
+        matchingTitles.push(page);
+        titleMap.set(title.toLowerCase(), matchingTitles);
+      }
+
+      const description = (page.metaDescription || '').trim();
+      if (!description) add('missing-description', page, 'No meta description was extracted.');
+      else {
+        if (description.length < 70) add('description-too-short', page, `${description.length} characters: “${description.slice(0, 120)}”`);
+        if (description.length > 160) add('description-too-long', page, `${description.length} characters: “${description.slice(0, 120)}…”`);
+        const matchingDescriptions = descriptionMap.get(description.toLowerCase()) || [];
+        matchingDescriptions.push(page);
+        descriptionMap.set(description.toLowerCase(), matchingDescriptions);
+      }
+
+      const h1s = Array.isArray(page.h1List) ? page.h1List.filter(Boolean) : (page.h1 ? [page.h1] : []);
+      if (!h1s.length) add('missing-h1', page, 'No H1 was extracted.');
+      else if (h1s.length > 1) add('multiple-h1', page, `${h1s.length} H1 headings: ${h1s.slice(0, 3).join(' • ')}`);
+
+      const canonical = (page.canonical || '').trim();
+      if (!canonical) add('missing-canonical', page, 'No canonical URL was extracted.');
+      else if (this.comparableUrl(canonical) !== this.comparableUrl(page.url)) add('canonical-mismatch', page, `Canonical: ${canonical}`);
+
+      if (/\bnoindex\b/i.test(page.metaRobots || '')) add('noindex', page, `Robots directive: ${page.metaRobots}`);
+      const contentWords = page.customContent?.wordCount || page.totalWords || 0;
+      if (contentWords < 300) add('thin-content', page, `${contentWords.toLocaleString()} extracted words.`);
+    }
+
+    for (const pages of titleMap.values()) {
+      if (pages.length > 1) pages.forEach(page => add('duplicate-title', page, `Shared by ${pages.length} pages: “${page.title}”`));
+    }
+    for (const pages of descriptionMap.values()) {
+      if (pages.length > 1) pages.forEach(page => add('duplicate-description', page, `Shared by ${pages.length} pages: “${page.metaDescription.slice(0, 120)}”`));
+    }
+    for (const link of allLinks) {
+      if ((link?.linkType === 'Internal' || link?.isInternal === true) && (link.statusCode === 0 || link.statusCode >= 400)) {
+        add('broken-internal-link', { url: link.sourceUrl }, `${link.targetUrl || link.url || link.rawHref || 'Unknown target'} returned ${link.statusCode || 'no response'}.`);
+      }
+    }
+
+    return [...groups.values()].flatMap(group => group.items.map(item => ({
+      ...item,
+      code: group.code,
+      severity: group.severity,
+      label: group.label,
+      description: group.description
+    })));
+  }
+
+  static comparableUrl(value) {
+    try {
+      const parsed = new URL(value);
+      parsed.hash = '';
+      if (parsed.pathname === '/') parsed.pathname = '';
+      return parsed.toString().replace(/\/$/, '').toLowerCase();
+    } catch {
+      return String(value || '').trim().replace(/\/$/, '').toLowerCase();
+    }
+  }
+
+  /** Export detected SEO issues as a standalone CSV report. */
+  static generateIssuesCSV(results, allLinks = []) {
+    const headers = ['Severity', 'Issue', 'Issue Code', 'Description', 'URL', 'Details'];
+    const rows = this.getSEOIssues(results, allLinks).map(issue => [
+      this.escapeCSV(issue.severity),
+      this.escapeCSV(issue.label),
+      this.escapeCSV(issue.code),
+      this.escapeCSV(issue.description),
+      this.escapeCSV(issue.url),
+      this.escapeCSV(issue.detail)
+    ]);
+    return [headers.join(','), ...rows.map(row => row.join(','))].join('\r\n');
   }
 
   /**

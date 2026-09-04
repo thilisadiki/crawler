@@ -47,6 +47,9 @@ async function runTests() {
   const pagesCsv = Exporter.generatePagesCSV(sampleResults);
   assert(pagesCsv.includes('https://example.com/test'), 'CSV should contain URL');
   assert(pagesCsv.includes('Content Area Detected'), 'CSV should contain the content detection header');
+  const issuesCsv = Exporter.generateIssuesCSV(sampleResults);
+  assert(issuesCsv.includes('Severity,Issue,Issue Code'), 'Issues CSV should contain issue headers');
+  assert(issuesCsv.includes('Title is too short'), 'Issues CSV should contain detected issues');
   console.log('✅ Exporter tests passed');
 
   console.log('--- 3. Testing Single URL Scope Crawl ---');

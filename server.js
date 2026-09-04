@@ -605,6 +605,17 @@ app.get('/api/export/links.csv', (req, res) => {
   res.send(csv);
 });
 
+app.get('/api/export/issues.csv', (req, res) => {
+  const { crawler } = getSessionCrawler(req);
+  if (!crawler || !crawler.results.length) {
+    return res.status(400).send('No crawl data available to export.');
+  }
+  const csv = Exporter.generateIssuesCSV(crawler.results, crawler.allLinks);
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', `attachment; filename="seo_issues_crawl_${Date.now()}.csv"`);
+  res.send(csv);
+});
+
 app.get(['/api/export/custom-content.csv', '/api/export/kentico.csv'], (req, res) => {
   const { crawler } = getSessionCrawler(req);
   if (!crawler || !crawler.results.length) {
