@@ -177,6 +177,29 @@ document.querySelectorAll('a[href^="/api/export/"]').forEach(link => {
   link.href = crawlerApiUrl(link.getAttribute('href'));
 });
 
+const exportMenuButton = document.getElementById('exportMenuButton');
+const exportMenu = document.getElementById('exportMenu');
+
+function closeExportMenu() {
+  exportMenu.classList.add('hidden');
+  exportMenuButton.setAttribute('aria-expanded', 'false');
+}
+
+exportMenuButton.addEventListener('click', event => {
+  event.stopPropagation();
+  const isOpen = !exportMenu.classList.contains('hidden');
+  exportMenu.classList.toggle('hidden', isOpen);
+  exportMenuButton.setAttribute('aria-expanded', String(!isOpen));
+});
+
+document.addEventListener('click', event => {
+  if (!event.target.closest('.export-menu')) closeExportMenu();
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') closeExportMenu();
+});
+
 // View Tab Switcher
 viewTabButtons.forEach(btn => {
   btn.addEventListener('click', () => {

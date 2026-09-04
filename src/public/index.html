@@ -202,72 +202,15 @@
         </form>
       </section>
 
-      <!-- KPI Executive Metrics Grid -->
-      <section class="kpi-grid">
-        <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Pages Audited</span>
-            <span class="kpi-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            </span>
-          </div>
-          <div class="kpi-number" id="statCrawled">0</div>
-          <div class="kpi-footer">
-            <span class="kpi-subtext" id="statProgress">0% of target limit</span>
-          </div>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Pending Queue</span>
-            <span class="kpi-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            </span>
-          </div>
-          <div class="kpi-number" id="statQueued">0</div>
-          <div class="kpi-footer">
-            <span class="kpi-subtext" id="statSpeed">0.0 req/sec</span>
-          </div>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Discovered Links</span>
-            <span class="kpi-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            </span>
-          </div>
-          <div class="kpi-number" id="statInternalLinks">0</div>
-          <div class="kpi-footer">
-            <span class="kpi-subtext"><strong id="statExternalLinks">0</strong> external outlinks</span>
-          </div>
-        </div>
-
-        <div class="kpi-card highlight-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Content Area Coverage</span>
-            <span class="kpi-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-            </span>
-          </div>
-          <div class="kpi-number" id="statCustomPercent">0%</div>
-          <div class="kpi-footer">
-            <span class="kpi-subtext"><strong id="statCustomCount">0</strong> pages verified</span>
-          </div>
-        </div>
-
-        <div class="kpi-card">
-          <div class="kpi-top">
-            <span class="kpi-label">Errors & Exclusions</span>
-            <span class="kpi-icon">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            </span>
-          </div>
-          <div class="kpi-number" id="statErrors">0</div>
-          <div class="kpi-footer">
-            <span class="kpi-subtext">Elapsed: <strong id="statElapsedTime">00:00</strong></span>
-          </div>
-        </div>
+      <!-- Compact Crawl Summary -->
+      <section class="crawl-summary" aria-label="Current crawl summary">
+        <table>
+          <thead><tr><th>Pages</th><th>Queue</th><th>Internal links</th><th>Content coverage</th><th>Errors</th></tr></thead>
+          <tbody>
+            <tr class="summary-values"><td id="statCrawled">0</td><td id="statQueued">0</td><td id="statInternalLinks">0</td><td id="statCustomPercent">0%</td><td id="statErrors">0</td></tr>
+            <tr class="summary-details"><td id="statProgress">0% of target limit</td><td id="statSpeed">0.0 req/sec</td><td><strong id="statExternalLinks">0</strong> external</td><td><strong id="statCustomCount">0</strong> verified</td><td>Elapsed: <strong id="statElapsedTime">00:00</strong></td></tr>
+          </tbody>
+        </table>
       </section>
 
       <!-- Data Explorer Section with Multi-View Tabs -->
@@ -276,39 +219,33 @@
           <div class="view-mode-tabs">
             <button type="button" class="view-tab-btn active" data-view="pages-view">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-              Audited Pages (<span id="viewCountPages">0</span>)
+              Pages <span class="view-count" id="viewCountPages">0</span>
             </button>
             <button type="button" class="view-tab-btn" data-view="links-view">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              Discovered Links & Anchors (<span id="viewCountLinks">0</span>)
+              Links <span class="view-count" id="viewCountLinks">0</span>
             </button>
             <button type="button" class="view-tab-btn" data-view="issues-view">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              SEO Issues (<span id="viewCountIssues">0</span>)
+              Issues <span class="view-count" id="viewCountIssues">0</span>
             </button>
             <button type="button" class="view-tab-btn" data-view="content-view">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-              Extracted Content Area Text
+              Content
             </button>
           </div>
 
-          <div class="export-actions">
-            <a id="exportExcelBtn" href="/api/export/workbook.xlsx" class="btn btn-sm btn-primary" style="background: #166534; border-color: #15803d; color: #ffffff;" download>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
-              Multi-Sheet Excel (.xlsx)
-            </a>
-            <a id="exportPagesBtn" href="/api/export/pages.csv" class="btn btn-sm btn-outline" download>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Pages CSV
-            </a>
-            <a id="exportLinksBtn" href="/api/export/links.csv" class="btn btn-sm btn-outline" download>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              All Links CSV
-            </a>
-            <a id="exportCustomBtn" href="/api/export/custom-content.csv" class="btn btn-sm btn-outline" download>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Content Area CSV
-            </a>
+          <div class="export-menu">
+            <button id="exportMenuButton" class="btn btn-sm btn-outline" type="button" aria-haspopup="true" aria-expanded="false">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 0-2 2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Export <span aria-hidden="true">▾</span>
+            </button>
+            <div id="exportMenu" class="export-menu-panel hidden" role="menu">
+              <a id="exportExcelBtn" href="/api/export/workbook.xlsx" role="menuitem" download>Excel workbook (.xlsx)</a>
+              <a id="exportPagesBtn" href="/api/export/pages.csv" role="menuitem" download>Pages CSV</a>
+              <a id="exportLinksBtn" href="/api/export/links.csv" role="menuitem" download>Links CSV</a>
+              <a id="exportCustomBtn" href="/api/export/custom-content.csv" role="menuitem" download>Content Area CSV</a>
+            </div>
           </div>
         </div>
 
