@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { CrawlPage } from '../../types/crawl';
 
 type PageTab = 'title' | 'description' | 'keywords' | 'h1' | 'h2' | 'content';
-type PresenceFilter = 'all' | 'present' | 'missing' | 'multiple';
+type StatusFilter = 'all' | '200' | 'errors';
 type SortKey = 'index' | 'status' | 'url' | 'value' | 'length';
 
 const TABS: Array<{ value: PageTab; label: string }> = [
@@ -37,9 +37,9 @@ function tabValueLabel(tab: PageTab) {
   return TABS.find(item => item.value === tab)?.label || 'Value';
 }
 
-export function PagesExplorer({ pages, onInspectPage }: { pages: CrawlPage[]; onInspectPage: (page: CrawlPage) => void }) {
+export function PagesExplorer({ pages, onInspectPage }: { pages: CrawlPage[]; onInspectPage: (page: CrawlPage, section: 'overview' | 'content') => void }) {
   const [tab, setTab] = useState<PageTab>('title');
-  const [filter, setFilter] = useState<PresenceFilter>('all');
+  const [filter, setFilter] = useState<StatusFilter>('all');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'index', direction: 'asc' });
   const [page, setPage] = useState(1);
@@ -48,12 +48,10 @@ export function PagesExplorer({ pages, onInspectPage }: { pages: CrawlPage[]; on
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const matches = pages.map((item, index) => ({ page: item, index, value: valueFor(item, tab) })).filter(item => {
-      const count = countFor(item.page, tab, item.value);
       const matchesSearch = !query || `${item.page.url} ${item.page.statusCode || ''} ${item.value}`.toLowerCase().includes(query);
-      if (!matchesSearch) return false;
-      if (filter === 'present') return Boolean(item.value);
-      if (filter === 'missing') return !item.value;
-      if (filter === 'multiple') return (tab === 'h1' || tab === 'h2') && count > 1;
+      if (!item.value || !matchesSearch) return false;
+      if (filter === '200') return item.page.statusCode === 200;
+      if (filter === 'errors') return Boolean(item.page.error) || (item.page.statusCode || 0) >= 400;
       return true;
     });
     return matches.sort((left, right) => {
@@ -72,18 +70,16 @@ export function PagesExplorer({ pages, onInspectPage }: { pages: CrawlPage[]; on
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const rows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  const hasMultipleFilter = tab === 'h1' || tab === 'h2';
-
   function changeTab(value: PageTab) { setTab(value); setFilter('all'); setPage(1); }
-  function changeFilter(value: PresenceFilter) { setFilter(value); setPage(1); }
+  function changeFilter(value: StatusFilter) { setFilter(value); setPage(1); }
   function changeSort(key: SortKey) { setSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' })); setPage(1); }
   function header(label: string, key: SortKey) { return <th><button className="sort-button" onClick={() => changeSort(key)}>{label} <span>{sort.key === key ? (sort.direction === 'asc' ? '▲' : '▼') : '↕'}</span></button></th>; }
 
-  const filters: Array<[PresenceFilter, string]> = [['all', 'All'], ['present', 'Present'], ['missing', 'Missing'], ...(hasMultipleFilter ? [['multiple', 'Multiple'] as [PresenceFilter, string]] : [])];
+  const filters: Array<[StatusFilter, string]> = [['all', 'All with data'], ['200', '200 OK'], ['errors', 'Errors']];
   return <>
     <nav className="page-data-tabs" aria-label="On-page data categories">{TABS.map(item => <button key={item.value} className={tab === item.value ? 'active' : ''} onClick={() => changeTab(item.value)}>{item.label} <span>{tabCounts[item.value]}</span></button>)}</nav>
     <div className="toolbar page-data-toolbar"><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder={`Search URLs or ${tabValueLabel(tab).toLowerCase()}…`} />{filters.map(([value, label]) => <button key={value} className={filter === value ? 'pill active' : 'pill'} onClick={() => changeFilter(value)}>{label}</button>)}</div>
-    <div className="table-wrap"><table><thead><tr>{header('#', 'index')}{header('Status', 'status')}{header('URL', 'url')}{header(tabValueLabel(tab), 'value')}{header(countLabel(tab), 'length')}<th /></tr></thead><tbody>{rows.length ? rows.map(({ page: item, value }, index) => <tr key={item.url}><td>{(currentPage - 1) * pageSize + index + 1}</td><td><span className={item.statusCode === 200 ? 'code success' : 'code failure'}>{item.statusCode ?? '—'}</span></td><td className="url"><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a></td><td className="page-data-value" title={value}>{value || '—'}</td><td>{countFor(item, tab, value).toLocaleString()}</td><td><button className="inspect" onClick={() => onInspectPage(item)}>Inspect</button></td></tr>) : <tr><td colSpan={6} className="empty">No pages match this {tabValueLabel(tab).toLowerCase()} filter.</td></tr>}</tbody></table></div>
+    <div className="table-wrap"><table><thead><tr>{header('#', 'index')}{header('Status', 'status')}{header('URL', 'url')}{header(tabValueLabel(tab), 'value')}{header(countLabel(tab), 'length')}<th /></tr></thead><tbody>{rows.length ? rows.map(({ page: item, value }, index) => <tr key={item.url}><td>{(currentPage - 1) * pageSize + index + 1}</td><td><span className={item.statusCode === 200 ? 'code success' : 'code failure'}>{item.statusCode ?? '—'}</span></td><td className="url"><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a></td><td className="page-data-value" title={value}>{value}</td><td>{countFor(item, tab, value).toLocaleString()}</td><td><button className="inspect" onClick={() => onInspectPage(item, tab === 'content' ? 'content' : 'overview')}>Inspect</button></td></tr>) : <tr><td colSpan={6} className="empty">No pages with {tabValueLabel(tab).toLowerCase()} data match the selected filter.</td></tr>}</tbody></table></div>
     {filtered.length > 0 && <div className="pagination"><span>Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)} of {filtered.length.toLocaleString()}</span><label>Rows <select value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="50">50</option><option value="100">100</option><option value="250">250</option></select></label><button className="secondary" disabled={currentPage === 1} onClick={() => setPage(current => current - 1)}>Previous</button><span>Page {currentPage} of {totalPages}</span><button className="secondary" disabled={currentPage === totalPages} onClick={() => setPage(current => current + 1)}>Next</button></div>}
   </>;
 }
