@@ -80,7 +80,14 @@ export default function App() {
   }
   function setScope(scope: CrawlScope) {
     const single = scope === 'single-url';
-    setConfig(current => ({ ...current, crawlScope: scope, maxPages: single ? 1 : Math.max(2, current.maxPages), maxDepth: single ? 0 : Math.max(1, current.maxDepth) }));
+    setConfig(current => ({
+      ...current,
+      crawlScope: scope,
+      // The dashboard begins in single-URL mode (1 page). Restore the legacy
+      // 50-page default the first time the user changes to a broader scope.
+      maxPages: single ? 1 : (current.crawlScope === 'single-url' ? 50 : Math.max(2, current.maxPages)),
+      maxDepth: single ? 0 : Math.max(1, current.maxDepth)
+    }));
   }
   async function submit(event: FormEvent) {
     event.preventDefault();
