@@ -175,6 +175,14 @@ async function runTests() {
   assert.strictEqual(comparison.domChanged, true, 'Rendered DOM changes should be identified');
   assert(comparison.renderedWordCount > comparison.sourceWordCount, 'Rendered text should have a higher word count');
   assert(comparison.renderedOnlyWordCount > 0, 'Client-rendered words should be identified');
+  const recoveredLinks = singleCrawler.mergeDiscoveredLinks(
+    [{ url: 'https://example.com/visible', rawHref: '/visible', anchorText: 'Visible', isValidHttp: true }],
+    [
+      { url: 'https://example.com/visible', rawHref: '/visible', anchorText: 'Visible', isValidHttp: true },
+      { url: 'https://example.com/source-only', rawHref: '/source-only', anchorText: 'Source only', isValidHttp: true }
+    ]
+  );
+  assert.strictEqual(recoveredLinks.length, 2, 'Source-only navigation should supplement a sparse rendered DOM without duplicates');
   console.log('✅ Source/rendered DOM comparison tests passed');
 
   console.log('--- 8. Testing Browser Disconnect Detection ---');

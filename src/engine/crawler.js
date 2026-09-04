@@ -251,6 +251,30 @@ export class SiteCrawler extends EventEmitter {
     this.queued.add(effective);
   }
 
+  async fetchSourceSnapshot(url) {
+    const geo = this.geo || {};
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': `${geo.locale || 'en-US'},en;q=0.9`
+    };
+    const response = await fetch(url, {
+      headers,
+      redirect: 'follow',
+      signal: this.getAbortSignal(this.pageTimeoutMs)
+    });
+    return { html: await response.text(), url: response.url || url };
+  }
+
+  mergeDiscoveredLinks(renderedLinks = [], sourceLinks = []) {
+    const merged = new Map();
+    for (const link of [...renderedLinks, ...sourceLinks]) {
+      const key = `${link.url || ''}|${link.rawHref || ''}|${link.anchorText || ''}`;
+      if (!merged.has(key)) merged.set(key, link);
+    }
+    return [...merged.values()];
+  }
+
   async start() {
     if (this.isRunning) return;
     this.isRunning = true;
@@ -562,6 +586,10 @@ export class SiteCrawler extends EventEmitter {
     };
 
     try {
+      // Keep the unrendered response alongside the browser DOM. Besides the
+      // source/DOM comparison, this rescues crawlable navigation if a target
+      // serves an automation browser a stripped page or a challenge shell.
+      const sourceSnapshotPromise = this.fetchSourceSnapshot(url).catch(() => null);
       pageContext = await this.createPageContextWithTimeout();
       if (this.isCancellationRequested()) return;
       page = pageContext.page;
@@ -631,7 +659,8 @@ export class SiteCrawler extends EventEmitter {
       }
       if (this.isCancellationRequested()) return;
 
-      const sourceHtml = mainResponse ? await mainResponse.text().catch(() => '') : '';
+      const sourceSnapshot = await sourceSnapshotPromise;
+      const sourceHtml = sourceSnapshot?.html || await mainResponse?.text().catch(() => '') || '';
       const renderedHtml = await page.content().catch(() => '');
       crawlResult.renderComparison = SiteCrawler.compareSourceAndRenderedHtml(sourceHtml, renderedHtml);
 
@@ -640,6 +669,14 @@ export class SiteCrawler extends EventEmitter {
         customSelector: this.customContentSelector
       });
       if (this.isCancellationRequested()) return;
+      if (sourceHtml) {
+        const sourceExtracted = Extractor.extractFromHtml(sourceHtml, sourceSnapshot?.url || effectiveUrl, this.baseOrigin, { customSelector: this.customContentSelector, cheerio });
+        // Only supplement the DOM when it is clearly missing navigation. A
+        // normal JavaScript page keeps its rendered links untouched.
+        if (sourceExtracted.links.length > extracted.links.length + 3) {
+          extracted.links = this.mergeDiscoveredLinks(extracted.links, sourceExtracted.links);
+        }
+      }
       extracted.links = this.normalizeInternalLinkAliases(extracted.links);
       page.off('response', captureResourceResponse);
 
