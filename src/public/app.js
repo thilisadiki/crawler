@@ -44,6 +44,7 @@ function normalizeSeedUrl(value) {
 
 let crawlResults = [];
 let allDiscoveredLinks = [];
+let allResources = [];
 let activeFilter = 'all';
 let activeLinkFilter = 'all';
 let activeIssueFilter = 'all';
@@ -57,11 +58,26 @@ let activeEngine = null;
 let activeCapacity = null;
 const pagesPagination = { page: 1, pageSize: 100 };
 const linksPagination = { page: 1, pageSize: 100 };
+const resourcesPagination = { page: 1, pageSize: 100 };
 const issuesPagination = { page: 1, pageSize: 100 };
 const contentPagination = { page: 1, pageSize: 10 };
 
 function isInternalLink(link) {
   return link?.linkType === 'Internal' || link?.isInternal === true;
+}
+
+function rebuildResources() {
+  const seen = new Set();
+  allResources = [];
+  for (const page of crawlResults) {
+    for (const resource of page.resources || []) {
+      if (!resource?.url) continue;
+      const key = `${page.url}|${resource.resourceType || 'Other'}|${resource.url}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      allResources.push({ ...resource, sourceUrl: page.url });
+    }
+  }
 }
 
 // Sort States
@@ -118,9 +134,11 @@ const statElapsedTime = document.getElementById('statElapsedTime');
 const viewTabButtons = document.querySelectorAll('.view-tab-btn');
 const viewCountPages = document.getElementById('viewCountPages');
 const viewCountLinks = document.getElementById('viewCountLinks');
+const viewCountResources = document.getElementById('viewCountResources');
 const viewCountIssues = document.getElementById('viewCountIssues');
 const crawlTableBody = document.getElementById('crawlTableBody');
 const allLinksTableBody = document.getElementById('allLinksTableBody');
+const resourcesTableBody = document.getElementById('resourcesTableBody');
 const issuesTableBody = document.getElementById('issuesTableBody');
 const issuesSummary = document.getElementById('issuesSummary');
 const contentExplorerLayout = document.getElementById('contentExplorerLayout');
@@ -138,6 +156,11 @@ const linksPaginationControls = {
   root: document.getElementById('linksPagination'), summary: document.getElementById('linksPaginationSummary'),
   page: document.getElementById('linksPaginationPage'), previous: document.getElementById('linksPaginationPrevious'),
   next: document.getElementById('linksPaginationNext'), size: document.getElementById('linksPaginationSize')
+};
+const resourcesPaginationControls = {
+  root: document.getElementById('resourcesPagination'), summary: document.getElementById('resourcesPaginationSummary'),
+  page: document.getElementById('resourcesPaginationPage'), previous: document.getElementById('resourcesPaginationPrevious'),
+  next: document.getElementById('resourcesPaginationNext'), size: document.getElementById('resourcesPaginationSize')
 };
 const issuesPaginationControls = {
   root: document.getElementById('issuesPagination'), summary: document.getElementById('issuesPaginationSummary'),
@@ -247,6 +270,8 @@ let eventSourceReconnectTimer = null;
 function prepareNewCrawlUI() {
   crawlResults = [];
   allDiscoveredLinks = [];
+  allResources = [];
+  resourcesPagination.page = 1;
   activeIssueFilter = 'all';
   issuesPagination.page = 1;
   activeEngine = { mode: 'initializing', provider: null, error: null };
@@ -313,6 +338,7 @@ function initEventSource() {
           });
         }
       }
+      rebuildResources();
 
       updateStats(data.stats, data.queueLength);
       renderCurrentViews();
@@ -438,6 +464,7 @@ async function pollCrawlerStatus() {
               });
             }
           });
+          rebuildResources();
           renderCurrentViews();
         }
       }
@@ -466,6 +493,7 @@ async function restoreSessionResults() {
           allDiscoveredLinks.push({ ...link, sourceUrl: result.url });
         });
       });
+      rebuildResources();
     }
     renderCurrentViews();
   } catch (e) {}
@@ -582,6 +610,7 @@ function updateStats(stats, queueLength) {
 
   viewCountPages.textContent = stats.pagesCrawled;
   viewCountLinks.textContent = stats.internalLinksCount + stats.externalLinksCount;
+  if (viewCountResources) viewCountResources.textContent = allResources.length.toLocaleString();
 
   // Filter Counts
   const elAll = document.getElementById('filterCountAll');
@@ -663,6 +692,7 @@ function renderCurrentViews() {
   // Rendering hundreds of hidden table rows and full text cards is expensive.
   // Render only the visible explorer view; switching tabs renders its latest data.
   if (currentMainView === 'links-view') return renderAllLinksTable();
+  if (currentMainView === 'resources-view') return renderResourcesView();
   if (currentMainView === 'issues-view') return renderIssuesView();
   if (currentMainView === 'content-view') return renderContentView();
   return renderPagesTable();
@@ -1039,7 +1069,42 @@ function renderAllLinksTable() {
   }).join('');
 }
 
-// VIEW 3: SEO Issues
+// VIEW 3: Embedded Resources & Assets
+function renderResourcesView() {
+  const query = searchQuery.toLowerCase();
+  const matching = allResources.filter(resource => !query || [
+    resource.url, resource.resourceType, resource.sourceUrl, resource.discoveryStatus, resource.statusCode
+  ].some(value => String(value || '').toLowerCase().includes(query)));
+
+  if (viewCountResources) viewCountResources.textContent = allResources.length.toLocaleString();
+  if (!matching.length) {
+    resourcesTableBody.innerHTML = `<tr class="empty-state-row"><td colspan="6"><div class="empty-state"><p>${allResources.length ? 'No resources match the current search.' : 'No embedded resources discovered yet. Run a crawl to inventory CSS, JavaScript, media, fonts, and images.'}</p></div></td></tr>`;
+    updatePagination(resourcesPaginationControls, resourcesPagination, 0, { start: 0, totalPages: 1 }, 'resources');
+    return;
+  }
+
+  const pageInfo = paginateRows(matching, resourcesPagination);
+  updatePagination(resourcesPaginationControls, resourcesPagination, matching.length, pageInfo, 'resources');
+  resourcesTableBody.innerHTML = pageInfo.rows.map((resource, index) => {
+    const status = resource.statusCode || resource.discoveryStatus || 'Not checked';
+    const statusClass = Number(resource.statusCode) >= 400 ? 'status-4xx' : Number(resource.statusCode) >= 300 ? 'status-3xx' : Number(resource.statusCode) >= 200 ? 'status-200' : 'badge-target-no';
+    const size = Number.isFinite(Number(resource.sizeBytes)) && Number(resource.sizeBytes) > 0
+      ? `${(Number(resource.sizeBytes) / 1024).toFixed(Number(resource.sizeBytes) >= 1024 * 1024 ? 1 : 0)} ${Number(resource.sizeBytes) >= 1024 * 1024 ? 'MB' : 'KB'}`
+      : '—';
+    return `
+      <tr>
+        <td style="color: var(--text-dim); font-family: var(--font-mono); font-size: 0.72rem;">${pageInfo.start + index + 1}</td>
+        <td><span class="status-code-badge badge-target-yes">${resource.resourceType || 'Other'}</span></td>
+        <td class="url-cell" style="max-width: 470px;" title="${resource.url}"><a href="${resource.url}" target="_blank" rel="noopener noreferrer" style="color: #1d4ed8; text-decoration: none;">${resource.url} ↗</a></td>
+        <td><span class="status-code-badge ${statusClass}">${status}</span></td>
+        <td style="font-family: var(--font-mono); font-size: 0.75rem;">${size}</td>
+        <td class="url-cell" style="max-width: 340px;" title="${resource.sourceUrl}">${resource.sourceUrl}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// VIEW 4: SEO Issues
 function renderIssuesView() {
   const groups = getIssueGroups();
   const allIssues = groups.flatMap(group => group.items.map(item => ({
@@ -1471,6 +1536,8 @@ resetBtn.addEventListener('click', async () => {
 
       crawlResults = [];
       allDiscoveredLinks = [];
+      allResources = [];
+      resourcesPagination.page = 1;
       activeIssueFilter = 'all';
       issuesPagination.page = 1;
   activeEngine = null;
@@ -1512,6 +1579,7 @@ tableSearch.addEventListener('input', (e) => {
   searchQuery = e.target.value;
   pagesPagination.page = 1;
   linksPagination.page = 1;
+  resourcesPagination.page = 1;
   renderCurrentViews();
 });
 
@@ -1527,6 +1595,7 @@ filterTabs.forEach(pill => {
 
 bindPaginationControls(pagesPaginationControls, pagesPagination, renderPagesTable);
 bindPaginationControls(linksPaginationControls, linksPagination, renderAllLinksTable);
+bindPaginationControls(resourcesPaginationControls, resourcesPagination, renderResourcesView);
 bindPaginationControls(issuesPaginationControls, issuesPagination, renderIssuesView);
 bindPaginationControls(contentPaginationControls, contentPagination, renderContentView);
 

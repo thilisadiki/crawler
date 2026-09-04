@@ -38,7 +38,8 @@ export class Exporter {
    * Sheet 1: Master Overview of all pages
    * Sheet 2: Master All Discovered Links
    * Sheet 3: Detected SEO issues
-   * Sheet 4..N: Dedicated sheet for EVERY individual page (SEO copy, metadata, and page links)
+   * Sheet 4: Embedded resources and assets
+   * Sheet 5..N: Dedicated sheet for EVERY individual page (SEO copy, metadata, and page links)
    */
   static async generateMultiSheetWorkbook(results, allLinks = []) {
     const workbook = new ExcelJS.Workbook();
@@ -217,7 +218,42 @@ export class Exporter {
     });
 
     // -------------------------------------------------------------
-    // SHEET 4..N: Dedicated Sheet for Every Individual Crawled Page
+    // SHEET 4: Embedded Resources & Assets
+    // -------------------------------------------------------------
+    const resourcesSheet = workbook.addWorksheet('Resources & Assets', {
+      views: [{ state: 'frozen', ySplit: 1 }]
+    });
+    resourcesSheet.columns = [
+      { header: '#', key: 'id', width: 6 },
+      { header: 'Type', key: 'resourceType', width: 16 },
+      { header: 'URL', key: 'url', width: 58 },
+      { header: 'Status', key: 'status', width: 20 },
+      { header: 'HTTP Status', key: 'statusCode', width: 14 },
+      { header: 'Size (bytes)', key: 'sizeBytes', width: 16 },
+      { header: 'HTML Element', key: 'element', width: 16 },
+      { header: 'Source Page', key: 'sourceUrl', width: 58 }
+    ];
+    const headerRow4 = resourcesSheet.getRow(1);
+    headerRow4.height = 28;
+    headerRow4.eachCell(cell => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F766E' } };
+      cell.font = { name: 'Calibri', bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    });
+    this.getResources(results).forEach((resource, idx) => {
+      const row = resourcesSheet.addRow({ id: idx + 1, ...resource, status: resource.discoveryStatus || 'Not checked' });
+      row.getCell('id').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('statusCode').alignment = { vertical: 'middle', horizontal: 'center' };
+      row.getCell('sizeBytes').alignment = { vertical: 'middle', horizontal: 'right' };
+      if (idx % 2 === 1) {
+        row.eachCell(cell => {
+          if (!cell.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF0FDFA' } };
+        });
+      }
+    });
+
+    // -------------------------------------------------------------
+    // SHEET 5..N: Dedicated Sheet for Every Individual Crawled Page
     // -------------------------------------------------------------
     results.forEach((pageResult, idx) => {
       const sheetName = this.getSafeSheetName(pageResult.url, idx);
@@ -456,6 +492,37 @@ export class Exporter {
     } catch {
       return String(value || '').trim().replace(/\/$/, '').toLowerCase();
     }
+  }
+
+  static getResources(results = []) {
+    const resources = [];
+    const seen = new Set();
+    for (const page of results) {
+      for (const resource of page.resources || []) {
+        if (!resource?.url) continue;
+        const key = `${page.url}|${resource.resourceType || 'Other'}|${resource.url}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        resources.push({ ...resource, sourceUrl: page.url });
+      }
+    }
+    return resources;
+  }
+
+  /** Export CSS, scripts, media, fonts, and other embedded resources as CSV. */
+  static generateResourcesCSV(results = []) {
+    const headers = ['Type', 'URL', 'Discovery Status', 'HTTP Status', 'Size (bytes)', 'HTML Element', 'Attribute', 'Source Page'];
+    const rows = this.getResources(results).map(resource => [
+      this.escapeCSV(resource.resourceType || 'Other'),
+      this.escapeCSV(resource.url),
+      this.escapeCSV(resource.discoveryStatus || 'Not checked'),
+      this.escapeCSV(resource.statusCode),
+      this.escapeCSV(resource.sizeBytes),
+      this.escapeCSV(resource.element),
+      this.escapeCSV(resource.attribute),
+      this.escapeCSV(resource.sourceUrl)
+    ]);
+    return [headers.join(','), ...rows.map(row => row.join(','))].join('\r\n');
   }
 
   /** Export detected SEO issues as a standalone CSV report. */

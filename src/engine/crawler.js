@@ -268,6 +268,7 @@ export class SiteCrawler extends EventEmitter {
       externalLinksCount: 0,
       customLinksCount: 0,
       links: [],
+      resources: [],
       renderMode: browserFailure ? 'direct-dom-fallback' : 'direct-dom',
       renderError: browserFailure?.message || null,
       error: null,
@@ -421,6 +422,7 @@ export class SiteCrawler extends EventEmitter {
       externalLinksCount: 0,
       customLinksCount: 0,
       links: [],
+      resources: [],
       renderMode: 'browser',
       renderError: null,
       error: null,
@@ -432,6 +434,26 @@ export class SiteCrawler extends EventEmitter {
       if (this.isCancellationRequested()) return;
       page = pageContext.page;
       page.setDefaultTimeout(this.pageTimeoutMs);
+      const observedResources = new Map();
+      const captureResourceResponse = response => {
+        const resourceType = response.request().resourceType();
+        const typeMap = { stylesheet: 'Stylesheet', script: 'Script', image: 'Image', media: 'Media', font: 'Font' };
+        if (!typeMap[resourceType]) return;
+        const resourceUrl = response.url();
+        const headers = response.headers();
+        const parsedSize = Number.parseInt(headers['content-length'] || '', 10);
+        observedResources.set(this.resourceKey(resourceUrl, typeMap[resourceType]), {
+          url: resourceUrl,
+          rawUrl: resourceUrl,
+          resourceType: typeMap[resourceType],
+          element: 'network',
+          attribute: '',
+          statusCode: response.status(),
+          sizeBytes: Number.isFinite(parsedSize) ? parsedSize : null,
+          discoveryStatus: 'Loaded'
+        });
+      };
+      page.on('response', captureResourceResponse);
 
       let mainResponse = null;
       try {
@@ -478,6 +500,7 @@ export class SiteCrawler extends EventEmitter {
         customSelector: this.customContentSelector
       });
       if (this.isCancellationRequested()) return;
+      page.off('response', captureResourceResponse);
 
       // The page is no longer needed once its DOM has been extracted. Releasing it
       // before link checks keeps Chromium memory stable on constrained cloud hosts.
@@ -503,6 +526,7 @@ export class SiteCrawler extends EventEmitter {
       crawlResult.fullPageText = extracted.fullPageText;
       crawlResult.customContent = extracted.customContent;
       crawlResult.links = extracted.links;
+      crawlResult.resources = this.mergeResources(extracted.resources, observedResources);
 
       if (extracted.customContent && extracted.customContent.detected) {
         this.stats.customDetectedCount++;
@@ -619,6 +643,34 @@ export class SiteCrawler extends EventEmitter {
   isBrowserDisconnectError(error) {
     const message = error?.message || String(error || '');
     return /target (?:page, )?context or browser has been closed|browser has been closed|browser closed|browser.*disconnected|browser context creation timed out|page crashed|target closed/i.test(message);
+  }
+
+  resourceKey(url, resourceType) {
+    try {
+      const parsed = new URL(url);
+      parsed.hash = '';
+      return `${resourceType}|${parsed.toString()}`;
+    } catch {
+      return `${resourceType}|${String(url || '')}`;
+    }
+  }
+
+  mergeResources(declaredResources = [], observedResources = new Map()) {
+    const merged = new Map();
+    for (const resource of declaredResources || []) {
+      const key = this.resourceKey(resource.url, resource.resourceType);
+      if (merged.has(key)) continue;
+      const observed = observedResources.get(key);
+      merged.set(key, {
+        ...resource,
+        ...(observed || {}),
+        discoveryStatus: observed?.discoveryStatus || (['Image', 'Media', 'Font'].includes(resource.resourceType) ? 'Blocked by crawler' : 'Not observed')
+      });
+    }
+    for (const [key, observed] of observedResources) {
+      if (!merged.has(key)) merged.set(key, observed);
+    }
+    return [...merged.values()];
   }
 
   async createPageContextWithTimeout() {

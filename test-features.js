@@ -40,6 +40,10 @@ async function runTests() {
       customLinksCount: 2,
       internalLinksCount: 5,
       externalLinksCount: 1,
+      resources: [{
+        url: 'https://example.com/assets/site.css', resourceType: 'Stylesheet', element: 'link', attribute: 'href',
+        statusCode: 200, sizeBytes: 2048, discoveryStatus: 'Loaded'
+      }],
       error: null,
       timestamp: new Date().toISOString()
     }
@@ -50,6 +54,9 @@ async function runTests() {
   const issuesCsv = Exporter.generateIssuesCSV(sampleResults);
   assert(issuesCsv.includes('Severity,Issue,Issue Code'), 'Issues CSV should contain issue headers');
   assert(issuesCsv.includes('Title is too short'), 'Issues CSV should contain detected issues');
+  const resourcesCsv = Exporter.generateResourcesCSV(sampleResults);
+  assert(resourcesCsv.includes('Type,URL,Discovery Status'), 'Resources CSV should contain resource headers');
+  assert(resourcesCsv.includes('site.css'), 'Resources CSV should contain the asset URL');
   console.log('✅ Exporter tests passed');
 
   console.log('--- 3. Testing Single URL Scope Crawl ---');
@@ -113,6 +120,14 @@ async function runTests() {
   assert(heuristicResult.customContent.fullText.includes('Useful campaign guide'), 'Heuristic extraction should retain the focused content block');
   assert.strictEqual(heuristicResult.links.find(link => link.url === 'https://example.com/inside-content')?.isInsideCustom, true, 'Links inside heuristic content should be identified as in-content');
   assert.strictEqual(heuristicResult.links.find(link => link.url === 'https://example.com/terms')?.isInsideCustom, false, 'Links outside heuristic content should not be identified as in-content');
+  const resourceResult = Extractor.extractFromHtml(`
+    <html><head><link rel="stylesheet" href="/assets/site.css"><script src="/assets/app.js"></script><link rel="preload" as="font" href="/assets/site.woff2"></head>
+    <body><img src="/assets/logo.png"><video src="/media/intro.mp4"></video></body></html>
+  `, 'https://example.com/assets', 'https://example.com', { cheerio });
+  assert(resourceResult.resources.some(resource => resource.resourceType === 'Stylesheet' && resource.url.endsWith('/assets/site.css')), 'Stylesheets should be extracted as resources');
+  assert(resourceResult.resources.some(resource => resource.resourceType === 'Script' && resource.url.endsWith('/assets/app.js')), 'Scripts should be extracted as resources');
+  assert(resourceResult.resources.some(resource => resource.resourceType === 'Image' && resource.url.endsWith('/assets/logo.png')), 'Images should be extracted as resources');
+  assert(resourceResult.resources.some(resource => resource.resourceType === 'Media' && resource.url.endsWith('/media/intro.mp4')), 'Media should be extracted as resources');
   console.log('✅ Content-area selector and heuristic tests passed');
 
   console.log('--- 8. Testing Root-Domain Seed URL Normalization ---');

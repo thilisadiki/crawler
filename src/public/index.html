@@ -228,6 +228,10 @@
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
               Links <span class="view-count" id="viewCountLinks">0</span>
             </button>
+            <button type="button" class="view-tab-btn" data-view="resources-view">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M8 8h8v8H8z"/></svg>
+              Resources <span class="view-count" id="viewCountResources">0</span>
+            </button>
             <button type="button" class="view-tab-btn" data-view="issues-view">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               Issues <span class="view-count" id="viewCountIssues">0</span>
@@ -247,6 +251,7 @@
               <a id="exportExcelBtn" href="/api/export/workbook.xlsx" role="menuitem" download>Excel workbook (.xlsx)</a>
               <a id="exportPagesBtn" href="/api/export/pages.csv" role="menuitem" download>Pages CSV</a>
               <a id="exportLinksBtn" href="/api/export/links.csv" role="menuitem" download>Links CSV</a>
+              <a id="exportResourcesBtn" href="/api/export/resources.csv" role="menuitem" download>Resources CSV</a>
               <a id="exportIssuesBtn" href="/api/export/issues.csv" role="menuitem" download>SEO Issues CSV</a>
               <a id="exportCustomBtn" href="/api/export/custom-content.csv" role="menuitem" download>Content Area CSV</a>
             </div>
@@ -356,7 +361,37 @@
           </div>
         </div>
 
-        <!-- VIEW 3: SEO Issues -->
+        <!-- VIEW 3: Embedded Resources & Assets -->
+        <div id="resources-view" class="view-container">
+          <div class="table-container">
+            <table class="enterprise-table" id="resourcesTable">
+              <thead>
+                <tr>
+                  <th style="width: 55px;">#</th>
+                  <th style="width: 115px;">Type</th>
+                  <th>Resource URL</th>
+                  <th style="width: 155px;">Status</th>
+                  <th style="width: 120px;">Size</th>
+                  <th>Source Page</th>
+                </tr>
+              </thead>
+              <tbody id="resourcesTableBody">
+                <tr class="empty-state-row"><td colspan="6"><div class="empty-state"><p>No embedded resources discovered yet. Run a crawl to inventory CSS, JavaScript, media, fonts, and images.</p></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="resourcesPagination" class="table-pagination hidden" aria-label="Resources table pagination">
+            <span id="resourcesPaginationSummary" class="pagination-summary"></span>
+            <div class="pagination-actions">
+              <label>Rows <select id="resourcesPaginationSize" aria-label="Resources per page"><option value="50">50</option><option value="100" selected>100</option><option value="250">250</option></select></label>
+              <button id="resourcesPaginationPrevious" class="pagination-button" type="button">Previous</button>
+              <span id="resourcesPaginationPage" class="pagination-page"></span>
+              <button id="resourcesPaginationNext" class="pagination-button" type="button">Next</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- VIEW 4: SEO Issues -->
         <div id="issues-view" class="view-container">
           <div id="issuesSummary" class="issues-summary"></div>
           <div class="table-container">
@@ -386,7 +421,7 @@
           </div>
         </div>
 
-        <!-- VIEW 4: Page Content & SEO Text View -->
+        <!-- VIEW 5: Page Content & SEO Text View -->
         <div id="content-view" class="view-container">
           <div class="content-explorer-layout" id="contentExplorerLayout">
             <div class="empty-state" style="padding: 40px;">

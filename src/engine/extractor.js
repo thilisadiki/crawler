@@ -207,6 +207,53 @@ export class Extractor {
         });
       }
 
+      // 5. Embedded resources are catalogued separately from crawlable page links.
+      // They are deliberately never added to the page queue.
+      const resources = [];
+      const addResource = (element, attribute, resourceType) => {
+        const rawUrl = element.getAttribute(attribute) || '';
+        if (!rawUrl || rawUrl.startsWith('data:')) return;
+        try {
+          const resolvedUrl = new URL(rawUrl, currentUrl);
+          if (!['http:', 'https:'].includes(resolvedUrl.protocol)) return;
+          resources.push({
+            url: resolvedUrl.toString(),
+            rawUrl,
+            resourceType,
+            element: element.tagName.toLowerCase(),
+            attribute,
+            statusCode: null,
+            sizeBytes: null,
+            discoveryStatus: 'Not checked'
+          });
+        } catch (e) {}
+      };
+
+      document.querySelectorAll('link[rel~="stylesheet"][href]').forEach(el => addResource(el, 'href', 'Stylesheet'));
+      document.querySelectorAll('script[src]').forEach(el => addResource(el, 'src', 'Script'));
+      document.querySelectorAll('img[src]').forEach(el => addResource(el, 'src', 'Image'));
+      document.querySelectorAll('img[srcset], source[srcset]').forEach(el => {
+        const type = el.tagName.toLowerCase() === 'source' && !el.closest('picture') ? 'Media' : 'Image';
+        (el.getAttribute('srcset') || '').split(',').forEach(candidate => {
+          const url = candidate.trim().split(/\s+/)[0];
+          if (!url || url.startsWith('data:')) return;
+          try {
+            const resolvedUrl = new URL(url, currentUrl);
+            if (['http:', 'https:'].includes(resolvedUrl.protocol)) {
+              resources.push({ url: resolvedUrl.toString(), rawUrl: url, resourceType: type, element: el.tagName.toLowerCase(), attribute: 'srcset', statusCode: null, sizeBytes: null, discoveryStatus: 'Not checked' });
+            }
+          } catch (e) {}
+        });
+      });
+      document.querySelectorAll('video[src], audio[src], track[src], source[src]').forEach(el => {
+        const type = el.tagName.toLowerCase() === 'source' && el.closest('picture') ? 'Image' : 'Media';
+        addResource(el, 'src', type);
+      });
+      document.querySelectorAll('link[rel~="preload"][as="font"][href]').forEach(el => addResource(el, 'href', 'Font'));
+      document.querySelectorAll('link[rel~="icon"][href]').forEach(el => addResource(el, 'href', 'Icon'));
+      document.querySelectorAll('iframe[src]').forEach(el => addResource(el, 'src', 'Frame'));
+      document.querySelectorAll('object[data], embed[src]').forEach(el => addResource(el, el.hasAttribute('data') ? 'data' : 'src', 'Embedded'));
+
       const totalWords = document.body ? document.body.innerText.trim().split(/\s+/).filter(Boolean).length : 0;
       const imagesCount = document.querySelectorAll('img').length;
       const fullPageText = document.body ? document.body.innerText.trim() : '';
@@ -236,7 +283,8 @@ export class Extractor {
           textSnippet: customText || '',
           headings: customHeadings
         },
-        links
+        links,
+        resources
       };
     }, { currentUrl, baseOrigin, customSelector, contentSelectors: CONTENT_AREA_SELECTORS });
   }
@@ -398,6 +446,47 @@ export class Extractor {
       });
     });
 
+    const resources = [];
+    const addResource = (element, attribute, resourceType) => {
+      const rawUrl = $(element).attr(attribute) || '';
+      if (!rawUrl || rawUrl.startsWith('data:')) return;
+      try {
+        const resolvedUrl = new URL(rawUrl, currentUrl);
+        if (!['http:', 'https:'].includes(resolvedUrl.protocol)) return;
+        resources.push({
+          url: resolvedUrl.toString(), rawUrl, resourceType,
+          element: element.tagName.toLowerCase(), attribute,
+          statusCode: null, sizeBytes: null, discoveryStatus: 'Not checked'
+        });
+      } catch (e) {}
+    };
+
+    $('link[rel~="stylesheet"][href]').each((_, el) => addResource(el, 'href', 'Stylesheet'));
+    $('script[src]').each((_, el) => addResource(el, 'src', 'Script'));
+    $('img[src]').each((_, el) => addResource(el, 'src', 'Image'));
+    $('img[srcset], source[srcset]').each((_, el) => {
+      const $el = $(el);
+      const type = el.tagName.toLowerCase() === 'source' && !$el.closest('picture').length ? 'Media' : 'Image';
+      ($el.attr('srcset') || '').split(',').forEach(candidate => {
+        const rawUrl = candidate.trim().split(/\s+/)[0];
+        if (!rawUrl || rawUrl.startsWith('data:')) return;
+        try {
+          const resolvedUrl = new URL(rawUrl, currentUrl);
+          if (['http:', 'https:'].includes(resolvedUrl.protocol)) {
+            resources.push({ url: resolvedUrl.toString(), rawUrl, resourceType: type, element: el.tagName.toLowerCase(), attribute: 'srcset', statusCode: null, sizeBytes: null, discoveryStatus: 'Not checked' });
+          }
+        } catch (e) {}
+      });
+    });
+    $('video[src], audio[src], track[src], source[src]').each((_, el) => {
+      const type = el.tagName.toLowerCase() === 'source' && $(el).closest('picture').length ? 'Image' : 'Media';
+      addResource(el, 'src', type);
+    });
+    $('link[rel~="preload"][as="font"][href]').each((_, el) => addResource(el, 'href', 'Font'));
+    $('link[rel~="icon"][href]').each((_, el) => addResource(el, 'href', 'Icon'));
+    $('iframe[src]').each((_, el) => addResource(el, 'src', 'Frame'));
+    $('object[data], embed[src]').each((_, el) => addResource(el, $(el).attr('data') ? 'data' : 'src', 'Embedded'));
+
     const bodyText = $('body').text().trim();
     const totalWords = bodyText ? bodyText.split(/\s+/).filter(Boolean).length : 0;
     const imagesCount = $('img').length;
@@ -427,7 +516,8 @@ export class Extractor {
         textSnippet: customText || '',
         headings: customHeadings
       },
-      links
+      links,
+      resources
     };
   }
 

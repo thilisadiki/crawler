@@ -119,6 +119,7 @@ export class CrawlStorage {
         custom_headings JSON NULL,
         custom_text LONGTEXT NULL,
         full_page_text LONGTEXT NULL,
+        resources_json JSON NULL,
         render_mode VARCHAR(64) NULL,
         render_error TEXT NULL,
         error_text TEXT NULL,
@@ -148,6 +149,14 @@ export class CrawlStorage {
         INDEX idx_crawl_links_page_id (page_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // Existing Hostinger databases were created before asset persistence was
+    // introduced. Add the column once without disturbing stored crawls.
+    try {
+      await this.pool.query('ALTER TABLE crawl_pages ADD COLUMN resources_json JSON NULL AFTER full_page_text');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+    }
   }
 
   async createCrawl({ id, sessionId, seedUrl, config }) {
@@ -190,8 +199,8 @@ export class CrawlStorage {
           title, meta_description, canonical, meta_robots, h1, h1_list, h2_list, images_count,
           total_words, internal_links_count, external_links_count, custom_links_count, custom_detected,
           custom_selector, custom_detection_method, custom_word_count, custom_headings, custom_text,
-          full_page_text, render_mode, render_error, error_text, crawled_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          full_page_text, resources_json, render_mode, render_error, error_text, crawled_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           url = VALUES(url), depth = VALUES(depth), source_url = VALUES(source_url), status_code = VALUES(status_code),
           status_text = VALUES(status_text), response_time_ms = VALUES(response_time_ms), title = VALUES(title),
@@ -201,7 +210,7 @@ export class CrawlStorage {
           external_links_count = VALUES(external_links_count), custom_links_count = VALUES(custom_links_count),
           custom_detected = VALUES(custom_detected), custom_selector = VALUES(custom_selector),
           custom_detection_method = VALUES(custom_detection_method), custom_word_count = VALUES(custom_word_count),
-          custom_headings = VALUES(custom_headings), custom_text = VALUES(custom_text), full_page_text = VALUES(full_page_text),
+          custom_headings = VALUES(custom_headings), custom_text = VALUES(custom_text), full_page_text = VALUES(full_page_text), resources_json = VALUES(resources_json),
           render_mode = VALUES(render_mode), render_error = VALUES(render_error), error_text = VALUES(error_text), crawled_at = VALUES(crawled_at)`,
         [
           crawlId, result.id || null, result.url, result.depth || 0, nullable(result.sourceUrl), nullable(result.statusCode),
@@ -211,6 +220,7 @@ export class CrawlStorage {
           nullable(result.internalLinksCount), nullable(result.externalLinksCount), nullable(result.customLinksCount),
           custom.detected ? 1 : 0, nullable(custom.selectorUsed), nullable(custom.detectionMethod), nullable(custom.wordCount),
           JSON.stringify(custom.headings || []), nullable(custom.fullText || custom.textSnippet), nullable(result.fullPageText),
+          JSON.stringify(result.resources || []),
           nullable(result.renderMode), nullable(result.renderError), nullable(result.error), result.timestamp ? new Date(result.timestamp) : new Date()
         ]
       );
@@ -298,6 +308,7 @@ export class CrawlStorage {
         customLinksCount: page.custom_links_count, renderMode: page.render_mode, renderError: page.render_error,
         error: page.error_text, timestamp: page.crawled_at,
         fullPageText: page.full_page_text || '',
+        resources: parseJson(page.resources_json, []),
         customContent: {
           detected: Boolean(page.custom_detected), selectorUsed: page.custom_selector || '',
           detectionMethod: page.custom_detection_method || 'none', wordCount: page.custom_word_count || 0,
