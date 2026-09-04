@@ -10,7 +10,7 @@ import { GEO_PRESETS, detectRegionFromUrl } from './geoPresets.js';
 export class SiteCrawler extends EventEmitter {
   constructor(options = {}) {
     super();
-    this.seedUrl = options.seedUrl || '';
+    this.seedUrl = Extractor.normalizeSeedUrl(options.seedUrl) || options.seedUrl || '';
     this.crawlScope = options.crawlScope || 'domain'; // 'single-url' | 'subpath' | 'domain' | 'subdomains'
     this.maxDepth = options.crawlScope === 'single-url' ? 0 : (options.maxDepth !== undefined ? parseInt(options.maxDepth, 10) : 3);
     this.maxPages = options.crawlScope === 'single-url' ? 1 : (options.maxPages !== undefined ? parseInt(options.maxPages, 10) : 50);

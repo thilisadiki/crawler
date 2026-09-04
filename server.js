@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 import { SiteCrawler } from './src/engine/crawler.js';
+import { Extractor } from './src/engine/extractor.js';
 import { Exporter } from './src/engine/exporter.js';
 import { crawlStorage } from './src/storage/database.js';
 
@@ -304,7 +305,7 @@ app.post('/api/crawler/start', async (req, res) => {
     }
 
     const {
-      seedUrl,
+      seedUrl: requestedSeedUrl,
       crawlScope = 'domain',
       maxDepth = 3,
       maxPages = 50,
@@ -320,8 +321,9 @@ app.post('/api/crawler/start', async (req, res) => {
       blockCrossDomainRedirects = true
     } = req.body || {};
 
+    const seedUrl = Extractor.normalizeSeedUrl(requestedSeedUrl);
     if (!seedUrl) {
-      return res.status(400).json({ error: 'Seed URL is required.' });
+      return res.status(400).json({ error: 'Enter a valid website address, such as graduateshub.org or https://graduateshub.org.' });
     }
 
     const cleanProxy = (proxy && typeof proxy === 'string') ? proxy.trim() || null : null;

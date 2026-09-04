@@ -110,6 +110,20 @@ async function runTests() {
   assert(heuristicResult.customContent.fullText.includes('Useful campaign guide'), 'Heuristic extraction should retain the focused content block');
   console.log('✅ Content-area selector and heuristic tests passed');
 
+  console.log('--- 8. Testing Root-Domain Seed URL Normalization ---');
+  assert.strictEqual(
+    Extractor.normalizeSeedUrl('graduateshub.org'),
+    'https://graduateshub.org/',
+    'A root domain should receive an HTTPS scheme automatically'
+  );
+  assert.strictEqual(
+    Extractor.normalizeSeedUrl('http://graduateshub.org/about'),
+    'http://graduateshub.org/about',
+    'An explicit HTTP URL should be preserved'
+  );
+  assert.strictEqual(Extractor.normalizeSeedUrl('mailto:test@example.com'), null, 'Non-web URLs should be rejected');
+  console.log('✅ Root-domain seed URL normalization tests passed');
+
   console.log('\n🎉 ALL AUTOMATED TESTS PASSED SUCCESSFULLY!');
 }
 

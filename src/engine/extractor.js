@@ -429,6 +429,26 @@ export class Extractor {
   }
 
   /**
+   * Turn a human-entered site/domain into a crawlable HTTP(S) URL.
+   * A scheme is optional for seed URLs, but not for discovered relative links.
+   */
+  static normalizeSeedUrl(value) {
+    if (typeof value !== 'string') return null;
+    let candidate = value.trim();
+    if (!candidate) return null;
+    if (candidate.startsWith('//')) candidate = `https:${candidate}`;
+    if (/^(?:mailto|javascript|data|file|ftp|tel):/i.test(candidate)) return null;
+    if (!/^[a-z][a-z\d+.-]*:\/\//i.test(candidate)) candidate = `https://${candidate}`;
+    try {
+      const parsed = new URL(candidate);
+      if (!parsed.hostname || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:')) return null;
+      return parsed.toString();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Normalize URLs for deduplication and crawling
    */
   static normalizeUrl(rawUrl, baseUrl) {

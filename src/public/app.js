@@ -27,6 +27,21 @@ function crawlerFetch(pathname, options) {
   return fetch(crawlerApiUrl(pathname), options);
 }
 
+function normalizeSeedUrl(value) {
+  let candidate = (value || '').trim();
+  if (!candidate) return null;
+  if (candidate.startsWith('//')) candidate = `https:${candidate}`;
+  if (/^(?:mailto|javascript|data|file|ftp|tel):/i.test(candidate)) return null;
+  if (!/^[a-z][a-z\d+.-]*:\/\//i.test(candidate)) candidate = `https://${candidate}`;
+  try {
+    const parsed = new URL(candidate);
+    if (!parsed.hostname || !['http:', 'https:'].includes(parsed.protocol)) return null;
+    return parsed.toString();
+  } catch (error) {
+    return null;
+  }
+}
+
 let crawlResults = [];
 let allDiscoveredLinks = [];
 let activeFilter = 'all';
@@ -57,6 +72,8 @@ const maxDepthInput = document.getElementById('maxDepth');
 const concurrencyInput = document.getElementById('concurrency');
 const delayInput = document.getElementById('delay');
 const autoScrollInput = document.getElementById('autoScroll');
+
+seedUrlInput.addEventListener('input', () => seedUrlInput.setCustomValidity(''));
 
 // Advanced Drawer Elements
 const toggleAdvancedBtn = document.getElementById('toggleAdvancedBtn');
@@ -1164,13 +1181,14 @@ detailModal.addEventListener('click', (e) => {
 // Form Submit
 crawlForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  let seedUrl = seedUrlInput.value.trim();
-  if (!seedUrl) return;
-
-  if (!seedUrl.startsWith('http://') && !seedUrl.startsWith('https://')) {
-    seedUrl = 'https://' + seedUrl;
-    seedUrlInput.value = seedUrl;
+  const seedUrl = normalizeSeedUrl(seedUrlInput.value);
+  if (!seedUrl) {
+    seedUrlInput.setCustomValidity('Enter a valid website address, such as graduateshub.org.');
+    seedUrlInput.reportValidity();
+    return;
   }
+  seedUrlInput.setCustomValidity('');
+  seedUrlInput.value = seedUrl;
 
   startTime = Date.now();
   updateUIStatus('running');
