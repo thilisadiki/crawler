@@ -767,6 +767,51 @@ app.get('/api/crawler/history/:crawlId', async (req, res) => {
   }
 });
 
+// Restores a saved MySQL crawl into the caller's dashboard session. The normal
+// dashboard, inspection views, filters, issue rules and exports can then use it
+// exactly like a crawl that was completed in the current browser tab.
+app.post('/api/crawler/history/:crawlId/restore', async (req, res) => {
+  const { sessionId, crawler: currentCrawler } = getSessionCrawler(req);
+  if (currentCrawler?.isRunning) return res.status(409).json({ error: 'Pause or stop the current crawl before restoring saved history.' });
+  try {
+    const history = await crawlStorage.getCrawl(req.params.crawlId);
+    if (!history) return res.status(404).json({ error: 'Saved crawl not found.' });
+    const config = history.crawl.config || {};
+    const restoredCrawler = new SiteCrawler({
+      seedUrl: history.crawl.seedUrl,
+      crawlScope: config.crawlScope,
+      maxDepth: config.maxDepth,
+      maxPages: config.maxPages,
+      noPageLimit: config.noPageLimit,
+      concurrency: config.concurrency,
+      autoScroll: config.autoScroll,
+      customContentSelector: config.customContentSelector,
+      respectRobotsTxt: config.respectRobotsTxt,
+      region: config.region,
+      proxy: config.proxy,
+      blockCrossDomainRedirects: config.blockCrossDomainRedirects
+    });
+    restoredCrawler.results = history.results;
+    restoredCrawler.allLinks = history.results.flatMap(page => (page.links || []).map(link => ({
+      ...link,
+      sourceUrl: page.url,
+      targetUrl: link.targetUrl || link.url || ''
+    })));
+    restoredCrawler.stats = history.crawl.stats || { ...restoredCrawler.stats, pagesCrawled: history.results.length, endTime: Date.now() };
+    restoredCrawler.queue = [];
+    restoredCrawler.isRunning = false;
+    restoredCrawler.isPaused = false;
+    restoredCrawler.engineMode = history.crawl.engine?.mode || 'browser';
+    restoredCrawler.engineProvider = history.crawl.engine?.provider || null;
+    restoredCrawler.engineError = history.crawl.engine?.error || null;
+    crawlerSessions.set(sessionId, { crawler: restoredCrawler, crawlId: history.crawl.id, updatedAt: Date.now() });
+    broadcastSSE(sessionId, 'restored', { crawlId: history.crawl.id, stats: restoredCrawler.stats, engine: restoredCrawler.getEngineStatus() });
+    return res.json({ success: true, crawl: history.crawl, restoredPages: history.results.length });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || 'Could not restore the saved crawl.' });
+  }
+});
+
 // Export Endpoints
 app.get(['/api/export/workbook.xlsx', '/api/export/excel'], async (req, res) => {
   const { crawler } = getSessionCrawler(req);

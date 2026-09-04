@@ -81,5 +81,17 @@ export function useCrawler() {
     }
   }, [sync]);
 
-  return useMemo(() => ({ state, stats, queueLength, pages, links, engine, capacity, error, run }), [state, stats, queueLength, pages, links, engine, capacity, error, run]);
+  const restoreHistory = useCallback(async (crawlId: string) => {
+    setError(null);
+    try {
+      const restored = await crawlerClient.restoreHistory(crawlId);
+      await sync();
+      return restored;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not restore the saved crawl.');
+      throw caught;
+    }
+  }, [sync]);
+
+  return useMemo(() => ({ state, stats, queueLength, pages, links, engine, capacity, error, run, restoreHistory }), [state, stats, queueLength, pages, links, engine, capacity, error, run, restoreHistory]);
 }

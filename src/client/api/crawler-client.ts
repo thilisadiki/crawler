@@ -36,6 +36,7 @@ export const crawlerClient = {
   pageHtml: (url: string) => request<HtmlComparisonCapture>(`/api/crawler/page-html?url=${encodeURIComponent(url)}`),
   history: () => request<{ crawls: CrawlHistoryRecord[]; storage: { configured?: boolean; connected?: boolean } }>('/api/crawler/history'),
   historyDetail: (crawlId: string) => request<CrawlHistoryDetail>(`/api/crawler/history/${encodeURIComponent(crawlId)}`),
+  restoreHistory: (crawlId: string) => request<{ success: boolean; restoredPages: number; crawl: { seedUrl: string; config?: Partial<CrawlConfig> } }>(`/api/crawler/history/${encodeURIComponent(crawlId)}/restore`, { method: 'POST', body: '{}' }),
   start: (config: CrawlConfig) => request<{ success: boolean }>('/api/crawler/start', { method: 'POST', body: JSON.stringify(config) }),
   pause: () => request<{ success: boolean }>('/api/crawler/pause', { method: 'POST', body: '{}' }),
   resume: () => request<{ success: boolean }>('/api/crawler/resume', { method: 'POST', body: '{}' }),
