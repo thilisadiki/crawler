@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { crawlerClient } from './api/crawler-client';
 import { useCrawler } from './features/crawl/useCrawler';
+import { PagesExplorer } from './features/pages/PagesExplorer';
 import { LinksExplorer } from './features/links/LinksExplorer';
 import { ResourcesExplorer } from './features/resources/ResourcesExplorer';
 import { IssuesExplorer } from './features/issues/IssuesExplorer';
@@ -82,6 +83,7 @@ function PageInspector({ page, onClose }: { page: CrawlPage; onClose: () => void
         {tab === 'overview' && <div className="overview-grid">
           <article className="overview-card"><span>Page title (&lt;title&gt;)</span><strong>{page.title || '[No title tag found]'}</strong></article>
           <article className="overview-card"><span>Meta description</span><strong>{page.metaDescription || '[No meta description found]'}</strong></article>
+          <article className="overview-card"><span>Meta keywords</span><strong>{page.metaKeywords || '[No meta keywords found]'}</strong></article>
           <article className="overview-card"><span>Canonical URL</span><a href={page.canonical || page.url} target="_blank" rel="noreferrer">{page.canonical || '[No canonical URL found]'}</a></article>
           <article className="overview-card"><span>Meta robots directive</span><strong className="monospace">{page.metaRobots || '[No robots directive found]'}</strong></article>
           <article className="overview-card"><span>H1 heading(s)</span><strong>{h1s}</strong></article>
@@ -102,10 +104,7 @@ export default function App() {
   const crawler = useCrawler();
   const [config, setConfig] = useState<CrawlConfig>(DEFAULT_CONFIG);
   const [advanced, setAdvanced] = useState(false);
-  const [filter, setFilter] = useState<'all' | '200' | 'content' | 'missing' | 'errors'>('all');
   const [search, setSearch] = useState('');
-  const [pageNumber, setPageNumber] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
   const [selectedPage, setSelectedPage] = useState<CrawlPage | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [explorerView, setExplorerView] = useState<'pages' | 'links' | 'resources' | 'issues' | 'content' | 'history'>('pages');
@@ -137,20 +136,7 @@ export default function App() {
     const timeout = window.setTimeout(() => setCompletionNotice(null), 12000);
     return () => window.clearTimeout(timeout);
   }, [completionNotice]);
-  const pages = useMemo(() => crawler.pages.filter(page => {
-    const query = search.trim().toLowerCase();
-    const searchable = `${page.url} ${page.title || ''} ${page.statusCode || ''}`.toLowerCase();
-    if (query && !searchable.includes(query)) return false;
-    if (filter === '200') return page.statusCode === 200;
-    if (filter === 'content') return contentFound(page);
-    if (filter === 'missing') return !contentFound(page);
-    if (filter === 'errors') return Boolean(page.error) || (page.statusCode || 0) >= 400;
-    return true;
-  }), [crawler.pages, filter, search]);
   const contentPages = crawler.pages.filter(contentFound).length;
-  const totalResultPages = Math.max(1, Math.ceil(pages.length / pageSize));
-  const currentResultPage = Math.min(pageNumber, totalResultPages);
-  const visiblePages = pages.slice((currentResultPage - 1) * pageSize, currentResultPage * pageSize);
   const resourceCount = useMemo(() => crawler.pages.reduce((count, page) => count + (page.resources?.length || 0), 0), [crawler.pages]);
   const issueCount = useMemo(() => getSeoIssues(crawler.pages, crawler.links).length, [crawler.pages, crawler.links]);
   const errors = (crawler.stats.errorsCount || 0) + (crawler.stats.blockedByRobotsCount || 0);
@@ -227,8 +213,8 @@ export default function App() {
           ['Excel workbook (.xlsx)', '/api/export/workbook.xlsx'], ['Pages CSV', '/api/export/pages.csv'], ['All links CSV', '/api/export/links.csv'], ['Resources CSV', '/api/export/resources.csv'], ['SEO issues CSV', '/api/export/issues.csv'], ['Content area CSV', '/api/export/custom-content.csv']
         ].map(([label, path]) => <a key={path} href={crawlerClient.exportUrl(path)}>{label}</a>)}</div>}</div></div>
         <nav className="explorer-tabs" aria-label="Dashboard data views"><button className={explorerView === 'pages' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('pages')}>Pages <span>{crawler.pages.length}</span></button><button className={explorerView === 'links' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('links')}>Discovered links & anchors <span>{crawler.links.length}</span></button><button className={explorerView === 'resources' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('resources')}>Resources & assets <span>{resourceCount}</span></button><button className={explorerView === 'issues' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('issues')}>SEO issues <span>{issueCount}</span></button><button className={explorerView === 'content' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('content')}>Extracted content</button><button className={explorerView === 'history' ? 'explorer-tab active' : 'explorer-tab'} onClick={() => setExplorerView('history')}>History</button></nav>
-        {explorerView !== 'history' && <div className="toolbar"><input value={search} onChange={event => { setSearch(event.target.value); setPageNumber(1); }} placeholder={explorerView === 'pages' ? 'Search URLs, titles or status codes…' : explorerView === 'links' ? 'Search anchor text, URLs or status codes…' : explorerView === 'resources' ? 'Search resource URLs, types, source pages or status…' : explorerView === 'issues' ? 'Search issue names, URLs, details or severity…' : 'Search URLs, titles, or extracted text…'} />{explorerView === 'pages' && (['all', '200', 'content', 'missing', 'errors'] as const).map(item => <button key={item} className={filter === item ? 'pill active' : 'pill'} onClick={() => { setFilter(item); setPageNumber(1); }}>{item === 'all' ? `All (${crawler.pages.length})` : item === '200' ? '200 OK' : item === 'content' ? `Content found (${contentPages})` : item === 'missing' ? `Content missing (${crawler.pages.length - contentPages})` : `Errors (${errors})`}</button>)}</div>}
-        {explorerView === 'pages' ? <><div className="table-wrap"><table><thead><tr><th>#</th><th>Status</th><th>URL</th><th>Title</th><th>Content area</th><th>Links</th><th>Latency</th><th /></tr></thead><tbody>{visiblePages.length ? visiblePages.map((page, index) => <tr key={page.url}><td>{(currentResultPage - 1) * pageSize + index + 1}</td><td><span className={page.statusCode === 200 ? 'code success' : 'code failure'}>{page.statusCode ?? '—'}</span></td><td className="url"><a href={page.url} target="_blank" rel="noreferrer">{page.url}</a></td><td>{page.title || '—'}</td><td><span className={contentFound(page) ? 'tag positive' : 'tag neutral'}>{contentFound(page) ? `Found (${page.customContent?.wordCount || 0}w)` : 'None'}</span></td><td>{page.links?.length || 0}</td><td>{page.responseTimeMs ? `${page.responseTimeMs}ms` : '—'}</td><td><button className="inspect" onClick={() => setSelectedPage(page)}>Inspect</button></td></tr>) : <tr><td colSpan={8} className="empty">No audited pages match these filters.</td></tr>}</tbody></table></div>{pages.length > 0 && <div className="pagination"><span>Showing {(currentResultPage - 1) * pageSize + 1}–{Math.min(currentResultPage * pageSize, pages.length)} of {pages.length.toLocaleString()}</span><label>Rows <select value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPageNumber(1); }}><option value="50">50</option><option value="100">100</option><option value="250">250</option></select></label><button className="secondary" disabled={currentResultPage === 1} onClick={() => setPageNumber(current => current - 1)}>Previous</button><span>Page {currentResultPage} of {totalResultPages}</span><button className="secondary" disabled={currentResultPage === totalResultPages} onClick={() => setPageNumber(current => current + 1)}>Next</button></div>}</> : explorerView === 'links' ? <LinksExplorer links={crawler.links} sharedSearch={search} /> : explorerView === 'resources' ? <ResourcesExplorer pages={crawler.pages} sharedSearch={search} /> : explorerView === 'issues' ? <IssuesExplorer pages={crawler.pages} links={crawler.links} sharedSearch={search} onInspectPage={url => { const target = crawler.pages.find(page => page.url === url); if (target) setSelectedPage(target); }} /> : explorerView === 'content' ? <ContentExplorer pages={crawler.pages} sharedSearch={search} /> : <HistoryExplorer onRestore={async crawlId => { const restored = await crawler.restoreHistory(crawlId); setConfig(current => ({ ...current, ...(restored.crawl.config || {}), seedUrl: restored.crawl.seedUrl })); setExplorerView('pages'); }} />}
+        {explorerView !== 'history' && explorerView !== 'pages' && <div className="toolbar"><input value={search} onChange={event => setSearch(event.target.value)} placeholder={explorerView === 'links' ? 'Search anchor text, URLs or status codes…' : explorerView === 'resources' ? 'Search resource URLs, types, source pages or status…' : explorerView === 'issues' ? 'Search issue names, URLs, details or severity…' : 'Search URLs, titles, or extracted text…'} /></div>}
+        {explorerView === 'pages' ? <PagesExplorer pages={crawler.pages} onInspectPage={setSelectedPage} /> : explorerView === 'links' ? <LinksExplorer links={crawler.links} sharedSearch={search} /> : explorerView === 'resources' ? <ResourcesExplorer pages={crawler.pages} sharedSearch={search} /> : explorerView === 'issues' ? <IssuesExplorer pages={crawler.pages} links={crawler.links} sharedSearch={search} onInspectPage={url => { const target = crawler.pages.find(page => page.url === url); if (target) setSelectedPage(target); }} /> : explorerView === 'content' ? <ContentExplorer pages={crawler.pages} sharedSearch={search} /> : <HistoryExplorer onRestore={async crawlId => { const restored = await crawler.restoreHistory(crawlId); setConfig(current => ({ ...current, ...(restored.crawl.config || {}), seedUrl: restored.crawl.seedUrl })); setExplorerView('pages'); }} />}
       </section>
     </main>
     {completionNotice && <div className="completion-notice" role="status"><strong>✓ Crawl finished</strong><span>{completionNotice}</span><button className="icon-button" onClick={() => setCompletionNotice(null)} aria-label="Dismiss crawl completion notification">×</button></div>}

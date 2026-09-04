@@ -102,6 +102,7 @@ export class CrawlStorage {
         response_time_ms INT NULL,
         title TEXT NULL,
         meta_description TEXT NULL,
+        meta_keywords TEXT NULL,
         canonical TEXT NULL,
         meta_robots TEXT NULL,
         h1 TEXT NULL,
@@ -166,6 +167,11 @@ export class CrawlStorage {
     } catch (error) {
       if (error.code !== 'ER_DUP_FIELDNAME') throw error;
     }
+    try {
+      await this.pool.query('ALTER TABLE crawl_pages ADD COLUMN meta_keywords TEXT NULL AFTER meta_description');
+    } catch (error) {
+      if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+    }
     // Add redirect fields for databases created before redirect auditing was introduced.
     for (const statement of [
       'ALTER TABLE crawl_links ADD COLUMN final_status_code INT NULL AFTER status_code',
@@ -217,15 +223,15 @@ export class CrawlStorage {
       const [pageInsert] = await connection.execute(
         `INSERT INTO crawl_pages (
           crawl_id, page_number, url, depth, source_url, status_code, status_text, response_time_ms,
-          title, meta_description, canonical, meta_robots, h1, h1_list, h2_list, images_count,
+          title, meta_description, meta_keywords, canonical, meta_robots, h1, h1_list, h2_list, images_count,
           total_words, internal_links_count, external_links_count, custom_links_count, custom_detected,
           custom_selector, custom_detection_method, custom_word_count, custom_headings, custom_text,
           full_page_text, resources_json, render_comparison_json, render_mode, render_error, error_text, crawled_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           url = VALUES(url), depth = VALUES(depth), source_url = VALUES(source_url), status_code = VALUES(status_code),
           status_text = VALUES(status_text), response_time_ms = VALUES(response_time_ms), title = VALUES(title),
-          meta_description = VALUES(meta_description), canonical = VALUES(canonical), meta_robots = VALUES(meta_robots),
+          meta_description = VALUES(meta_description), meta_keywords = VALUES(meta_keywords), canonical = VALUES(canonical), meta_robots = VALUES(meta_robots),
           h1 = VALUES(h1), h1_list = VALUES(h1_list), h2_list = VALUES(h2_list), images_count = VALUES(images_count),
           total_words = VALUES(total_words), internal_links_count = VALUES(internal_links_count),
           external_links_count = VALUES(external_links_count), custom_links_count = VALUES(custom_links_count),
@@ -235,7 +241,7 @@ export class CrawlStorage {
           render_mode = VALUES(render_mode), render_error = VALUES(render_error), error_text = VALUES(error_text), crawled_at = VALUES(crawled_at)`,
         [
           crawlId, result.id || null, result.url, result.depth || 0, nullable(result.sourceUrl), nullable(result.statusCode),
-          nullable(result.statusText), nullable(result.responseTimeMs), nullable(result.title), nullable(result.metaDescription),
+          nullable(result.statusText), nullable(result.responseTimeMs), nullable(result.title), nullable(result.metaDescription), nullable(result.metaKeywords),
           nullable(result.canonical), nullable(result.metaRobots), nullable(result.h1), JSON.stringify(result.h1List || []),
           JSON.stringify(result.h2List || []), nullable(result.imagesCount), nullable(result.totalWords),
           nullable(result.internalLinksCount), nullable(result.externalLinksCount), nullable(result.customLinksCount),
@@ -327,7 +333,7 @@ export class CrawlStorage {
       },
       results: pageRows.map(page => ({
         id: page.page_number, url: page.url, depth: page.depth, sourceUrl: page.source_url, statusCode: page.status_code,
-        statusText: page.status_text, responseTimeMs: page.response_time_ms, title: page.title, metaDescription: page.meta_description,
+        statusText: page.status_text, responseTimeMs: page.response_time_ms, title: page.title, metaDescription: page.meta_description, metaKeywords: page.meta_keywords,
         canonical: page.canonical, metaRobots: page.meta_robots, h1: page.h1, h1List: parseJson(page.h1_list, []),
         h2List: parseJson(page.h2_list, []), imagesCount: page.images_count, totalWords: page.total_words,
         internalLinksCount: page.internal_links_count, externalLinksCount: page.external_links_count,

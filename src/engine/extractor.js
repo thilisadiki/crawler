@@ -45,6 +45,7 @@ export class Extractor {
       // 1. Core SEO Metadata
       const title = document.title ? document.title.trim() : '';
       const metaDescription = getMeta('description') || getMeta('og:description');
+      const metaKeywords = getMeta('keywords');
       const canonicalEl = document.querySelector('link[rel="canonical"]');
       const canonical = canonicalEl ? canonicalEl.href : '';
       const metaRobots = getMeta('robots') || getMeta('googlebot');
@@ -261,6 +262,7 @@ export class Extractor {
       return {
         title,
         metaDescription,
+        metaKeywords,
         canonical,
         metaRobots,
         ogTitle,
@@ -305,6 +307,7 @@ export class Extractor {
 
     const title = ($('title').text() || '').trim();
     const metaDescription = getMeta('description') || getMeta('og:description');
+    const metaKeywords = getMeta('keywords');
     const canonical = $('link[rel="canonical"]').attr('href') || '';
     const metaRobots = getMeta('robots') || getMeta('googlebot');
     const ogTitle = getMeta('og:title');
@@ -494,6 +497,7 @@ export class Extractor {
     return {
       title,
       metaDescription,
+      metaKeywords,
       canonical,
       metaRobots,
       ogTitle,

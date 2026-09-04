@@ -114,6 +114,7 @@ export interface CrawlPage {
   statusCode?: number | null;
   title?: string;
   metaDescription?: string;
+  metaKeywords?: string;
   canonical?: string;
   metaRobots?: string;
   h1?: string;

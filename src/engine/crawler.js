@@ -454,6 +454,7 @@ export class SiteCrawler extends EventEmitter {
       responseTimeMs: 0,
       title: '',
       metaDescription: '',
+      metaKeywords: '',
       canonical: '',
       metaRobots: '',
       h1: '',
@@ -624,6 +625,7 @@ export class SiteCrawler extends EventEmitter {
       responseTimeMs: 0,
       title: '',
       metaDescription: '',
+      metaKeywords: '',
       canonical: '',
       metaRobots: '',
       h1: '',
@@ -753,6 +755,7 @@ export class SiteCrawler extends EventEmitter {
       crawlResult.title = extracted.title;
       crawlResult.url = effectiveUrl;
       crawlResult.metaDescription = extracted.metaDescription;
+      crawlResult.metaKeywords = extracted.metaKeywords;
       crawlResult.canonical = extracted.canonical;
       crawlResult.metaRobots = extracted.metaRobots;
       crawlResult.h1List = extracted.h1List;
