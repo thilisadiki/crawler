@@ -45,10 +45,20 @@ const adminSessions = new Map();
 const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://workva.co.za').replace(/\/$/, '');
 const crawlNetworkPolicy = new CrawlNetworkPolicy();
 const ALLOWED_CRAWL_REGIONS = new Set(['auto', ...Object.keys(GEO_PRESETS)]);
+const STRICT_CONTENT_SECURITY_POLICY = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self'; script-src 'self'; font-src 'self'";
+const LEGACY_CONTENT_SECURITY_POLICY = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self'; font-src 'self' https://fonts.gstatic.com";
 
 function preventIndexing(req, res, next) {
   // robots.txt is advisory; this response header is the crawler-enforced layer.
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+  next();
+}
+
+// The legacy dashboard is a protected fallback while the React dashboard is
+// the supported interface. It has a few remaining inline layout styles, so
+// only that route receives a narrow compatibility policy.
+function allowLegacyInlineAssets(req, res, next) {
+  res.setHeader('Content-Security-Policy', LEGACY_CONTENT_SECURITY_POLICY);
   next();
 }
 
@@ -58,7 +68,7 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-  res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'");
+  res.setHeader('Content-Security-Policy', STRICT_CONTENT_SECURITY_POLICY);
   if (isSecureRequest(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
@@ -69,7 +79,7 @@ app.use(['/admin', '/api', '/next', '/legacy'], preventIndexing);
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'home.html')));
 app.get('/app', requireDashboardAccess, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'next', 'index.html')));
 app.get('/index.html', (req, res) => res.redirect(301, '/'));
-app.get('/legacy', requireDashboardAccess, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'index.html')));
+app.get('/legacy', requireDashboardAccess, allowLegacyInlineAssets, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'index.html')));
 app.use('/next', requireDashboardAccess);
 app.use(express.static(path.join(__dirname, 'src', 'public')));
 
@@ -290,9 +300,18 @@ function passwordsMatch(candidate) {
   return expectedBuffer.length === candidateBuffer.length && timingSafeEqual(expectedBuffer, candidateBuffer);
 }
 
+function sendAdminAsset(filename) {
+  return (req, res) => res.sendFile(path.join(__dirname, 'src', 'admin', filename));
+}
+
 // The history-management screen is intentionally separate from the crawler UI.
 // It is unavailable until an administrator password is configured in the hosting
 // environment, and every data-changing endpoint requires its signed HTTP-only cookie.
+app.get('/admin/login.css', sendAdminAsset('login.css'));
+app.get('/admin/login.js', sendAdminAsset('login.js'));
+app.get('/admin/admin.css', requireDashboardAccess, sendAdminAsset('admin.css'));
+app.get('/admin/admin.js', requireDashboardAccess, sendAdminAsset('admin.js'));
+
 app.get('/admin/login', (req, res) => {
   if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).type('text/plain').send('Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
   if (hasValidAdminSession(req)) return res.redirect(safeNextPath(req.query.next, '/app'));
