@@ -36,6 +36,7 @@ The dashboard is designed for on-demand audits. Each browser tab receives its ow
 - Persists crawl runs, page results, links, and extracted text to MySQL when database credentials are configured.
 - Paginates large result sets (100 page/link rows and 10 text cards by default) so 1,000+ page audits stay responsive.
 - Includes public About, Privacy, Terms, and Acceptable Use pages linked from the dashboard footer.
+- Provides a live SEO Issues dashboard for page errors, broken internal links, title/meta/H1, canonical, noindex, and thin-content findings.
 
 ## Architecture
 
@@ -104,13 +105,17 @@ On Linux, CrawlLoom prefers `@sparticuz/chromium`, which is intended for environ
 
 ## Using the dashboard
 
-1. Enter a seed URL, including `https://` if possible.
+1. Enter a seed URL such as `graduateshub.org` or a full `https://` URL.
 2. Choose a crawl scope.
 3. Set page, depth, and worker limits.
 4. Optionally open **Advanced Directives & Exclusions** and configure selectors, geo settings, proxy, `robots.txt`, or URL rules.
 5. Select **Execute Crawl**.
-6. Inspect the Pages, Discovered Links, and Extracted Content Area Text views.
+6. Inspect the Pages, Discovered Links, SEO Issues, and Extracted Content Area Text views.
 7. Use the export buttons after pages have been collected.
+
+### SEO Issues dashboard
+
+The **SEO Issues** view analyses collected crawl data in real time. It groups issues by severity and lets you click a group to inspect affected pages. Current checks cover crawl errors, broken internal links, missing/duplicate/short/long titles and meta descriptions, missing or multiple H1s, missing or mismatched canonicals, `noindex` directives, and pages with fewer than 300 extracted words. Threshold-based findings are editorial prompts, not automatic errors; review them in the context of the page and search intent.
 
 ### Crawl scope
 

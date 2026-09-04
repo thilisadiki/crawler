@@ -46,6 +46,7 @@ let crawlResults = [];
 let allDiscoveredLinks = [];
 let activeFilter = 'all';
 let activeLinkFilter = 'all';
+let activeIssueFilter = 'all';
 let currentMainView = 'pages-view';
 let searchQuery = '';
 let selectedResult = null;
@@ -56,6 +57,7 @@ let activeEngine = null;
 let activeCapacity = null;
 const pagesPagination = { page: 1, pageSize: 100 };
 const linksPagination = { page: 1, pageSize: 100 };
+const issuesPagination = { page: 1, pageSize: 100 };
 const contentPagination = { page: 1, pageSize: 10 };
 
 function isInternalLink(link) {
@@ -116,8 +118,11 @@ const statElapsedTime = document.getElementById('statElapsedTime');
 const viewTabButtons = document.querySelectorAll('.view-tab-btn');
 const viewCountPages = document.getElementById('viewCountPages');
 const viewCountLinks = document.getElementById('viewCountLinks');
+const viewCountIssues = document.getElementById('viewCountIssues');
 const crawlTableBody = document.getElementById('crawlTableBody');
 const allLinksTableBody = document.getElementById('allLinksTableBody');
+const issuesTableBody = document.getElementById('issuesTableBody');
+const issuesSummary = document.getElementById('issuesSummary');
 const contentExplorerLayout = document.getElementById('contentExplorerLayout');
 
 // Search and Filter Elements
@@ -133,6 +138,11 @@ const linksPaginationControls = {
   root: document.getElementById('linksPagination'), summary: document.getElementById('linksPaginationSummary'),
   page: document.getElementById('linksPaginationPage'), previous: document.getElementById('linksPaginationPrevious'),
   next: document.getElementById('linksPaginationNext'), size: document.getElementById('linksPaginationSize')
+};
+const issuesPaginationControls = {
+  root: document.getElementById('issuesPagination'), summary: document.getElementById('issuesPaginationSummary'),
+  page: document.getElementById('issuesPaginationPage'), previous: document.getElementById('issuesPaginationPrevious'),
+  next: document.getElementById('issuesPaginationNext'), size: document.getElementById('issuesPaginationSize')
 };
 const contentPaginationControls = {
   root: document.getElementById('contentPagination'), summary: document.getElementById('contentPaginationSummary'),
@@ -176,6 +186,7 @@ viewTabButtons.forEach(btn => {
     btn.classList.add('active');
     currentMainView = btn.getAttribute('data-view');
     document.getElementById(currentMainView).classList.add('active');
+    document.getElementById('pageFilterTabs').classList.toggle('hidden', currentMainView !== 'pages-view');
     renderCurrentViews();
   });
 });
@@ -213,6 +224,8 @@ let eventSourceReconnectTimer = null;
 function prepareNewCrawlUI() {
   crawlResults = [];
   allDiscoveredLinks = [];
+  activeIssueFilter = 'all';
+  issuesPagination.page = 1;
   activeEngine = { mode: 'initializing', provider: null, error: null };
   accumulatedElapsedMs = 0;
   sessionStartTime = null;
@@ -588,6 +601,7 @@ function updateStats(stats, queueLength) {
   if (elError) elError.textContent = errLinks;
   const elNofollow = document.getElementById('filterLinksNofollow');
   if (elNofollow) elNofollow.textContent = nofollowLinks;
+  if (viewCountIssues) viewCountIssues.textContent = getIssues().length.toLocaleString();
 }
 
 function startTimer() {
@@ -626,8 +640,99 @@ function renderCurrentViews() {
   // Rendering hundreds of hidden table rows and full text cards is expensive.
   // Render only the visible explorer view; switching tabs renders its latest data.
   if (currentMainView === 'links-view') return renderAllLinksTable();
+  if (currentMainView === 'issues-view') return renderIssuesView();
   if (currentMainView === 'content-view') return renderContentView();
   return renderPagesTable();
+}
+
+function comparableUrl(value) {
+  try {
+    const parsed = new URL(value);
+    parsed.hash = '';
+    if (parsed.pathname === '/') parsed.pathname = '';
+    return parsed.toString().replace(/\/$/, '').toLowerCase();
+  } catch {
+    return String(value || '').trim().replace(/\/$/, '').toLowerCase();
+  }
+}
+
+function getIssueGroups() {
+  const definitions = [
+    ['page-error', 'Critical', 'Crawl error', 'The page returned an error or could not be crawled.'],
+    ['broken-internal-link', 'Critical', 'Broken internal link', 'An internal link points to a page that failed.'],
+    ['missing-title', 'Warning', 'Missing page title', 'Search results need a descriptive title.'],
+    ['duplicate-title', 'Warning', 'Duplicate page title', 'Multiple pages use the same title.'],
+    ['title-too-short', 'Opportunity', 'Title is too short', 'Title is under 30 characters.'],
+    ['title-too-long', 'Opportunity', 'Title is too long', 'Title is over 60 characters.'],
+    ['missing-description', 'Warning', 'Missing meta description', 'The page has no meta description.'],
+    ['duplicate-description', 'Warning', 'Duplicate meta description', 'Multiple pages use the same meta description.'],
+    ['description-too-short', 'Opportunity', 'Meta description is too short', 'Description is under 70 characters.'],
+    ['description-too-long', 'Opportunity', 'Meta description is too long', 'Description is over 160 characters.'],
+    ['missing-h1', 'Warning', 'Missing H1', 'The page has no H1 heading.'],
+    ['multiple-h1', 'Opportunity', 'Multiple H1 headings', 'The page has more than one H1.'],
+    ['missing-canonical', 'Opportunity', 'Missing canonical', 'No canonical URL was found.'],
+    ['canonical-mismatch', 'Warning', 'Canonical points elsewhere', 'The canonical URL differs from the crawled page.'],
+    ['noindex', 'Opportunity', 'Noindex directive', 'The page asks search engines not to index it.'],
+    ['thin-content', 'Opportunity', 'Thin content', 'The page has fewer than 300 extracted words.']
+  ];
+  const groups = new Map(definitions.map(([code, severity, label, description]) => [code, { code, severity, label, description, items: [] }]));
+  const add = (code, page, detail) => groups.get(code)?.items.push({ url: page.url, detail });
+  const titleMap = new Map();
+  const descriptionMap = new Map();
+
+  for (const page of crawlResults) {
+    if (page.statusCode >= 400 || page.error) add('page-error', page, page.error || `Returned HTTP ${page.statusCode}.`);
+    if (page.statusCode !== 200) continue;
+
+    const title = (page.title || '').trim();
+    if (!title) add('missing-title', page, 'No title tag was extracted.');
+    else {
+      if (title.length < 30) add('title-too-short', page, `${title.length} characters: “${title}”`);
+      if (title.length > 60) add('title-too-long', page, `${title.length} characters: “${title.slice(0, 100)}”`);
+      const matchingTitles = titleMap.get(title.toLowerCase()) || [];
+      matchingTitles.push(page);
+      titleMap.set(title.toLowerCase(), matchingTitles);
+    }
+
+    const description = (page.metaDescription || '').trim();
+    if (!description) add('missing-description', page, 'No meta description was extracted.');
+    else {
+      if (description.length < 70) add('description-too-short', page, `${description.length} characters: “${description.slice(0, 120)}”`);
+      if (description.length > 160) add('description-too-long', page, `${description.length} characters: “${description.slice(0, 120)}…”`);
+      const matchingDescriptions = descriptionMap.get(description.toLowerCase()) || [];
+      matchingDescriptions.push(page);
+      descriptionMap.set(description.toLowerCase(), matchingDescriptions);
+    }
+
+    const h1s = Array.isArray(page.h1List) ? page.h1List.filter(Boolean) : (page.h1 ? [page.h1] : []);
+    if (!h1s.length) add('missing-h1', page, 'No H1 was extracted.');
+    else if (h1s.length > 1) add('multiple-h1', page, `${h1s.length} H1 headings: ${h1s.slice(0, 3).join(' • ')}`);
+
+    const canonical = (page.canonical || '').trim();
+    if (!canonical) add('missing-canonical', page, 'No canonical URL was extracted.');
+    else if (comparableUrl(canonical) !== comparableUrl(page.url)) add('canonical-mismatch', page, `Canonical: ${canonical}`);
+
+    if (/\bnoindex\b/i.test(page.metaRobots || '')) add('noindex', page, `Robots directive: ${page.metaRobots}`);
+    const contentWords = page.customContent?.wordCount || page.totalWords || 0;
+    if (contentWords < 300) add('thin-content', page, `${contentWords.toLocaleString()} extracted words.`);
+  }
+
+  for (const [title, pages] of titleMap) {
+    if (pages.length > 1) pages.forEach(page => add('duplicate-title', page, `Shared by ${pages.length} pages: “${page.title}”`));
+  }
+  for (const [description, pages] of descriptionMap) {
+    if (pages.length > 1) pages.forEach(page => add('duplicate-description', page, `Shared by ${pages.length} pages: “${page.metaDescription.slice(0, 120)}”`));
+  }
+  for (const link of allDiscoveredLinks) {
+    if (isInternalLink(link) && (link.statusCode === 0 || link.statusCode >= 400)) {
+      add('broken-internal-link', { url: link.sourceUrl }, `${link.targetUrl || link.url || link.rawHref || 'Unknown target'} returned ${link.statusCode || 'no response'}.`);
+    }
+  }
+  return [...groups.values()].filter(group => group.items.length);
+}
+
+function getIssues() {
+  return getIssueGroups().flatMap(group => group.items.map(item => ({ ...item, code: group.code, severity: group.severity, label: group.label, description: group.description })));
 }
 
 function paginateRows(rows, pagination) {
@@ -911,7 +1016,62 @@ function renderAllLinksTable() {
   }).join('');
 }
 
-// VIEW 3: Page Content & SEO Text Explorer
+// VIEW 3: SEO Issues
+function renderIssuesView() {
+  const groups = getIssueGroups();
+  const allIssues = groups.flatMap(group => group.items.map(item => ({
+    ...item, code: group.code, severity: group.severity, label: group.label, description: group.description
+  })));
+  viewCountIssues.textContent = allIssues.length.toLocaleString();
+  if (activeIssueFilter !== 'all' && !groups.some(group => group.code === activeIssueFilter)) activeIssueFilter = 'all';
+
+  issuesSummary.innerHTML = [
+    `<button class="issue-summary-card ${activeIssueFilter === 'all' ? 'active' : ''}" data-issue="all"><strong>${allIssues.length.toLocaleString()}</strong><span>All issues</span></button>`,
+    ...groups.map(group => `<button class="issue-summary-card severity-${group.severity.toLowerCase()} ${activeIssueFilter === group.code ? 'active' : ''}" data-issue="${group.code}"><strong>${group.items.length.toLocaleString()}</strong><span>${group.label}</span></button>`)
+  ].join('');
+
+  document.querySelectorAll('#issuesSummary [data-issue]').forEach(button => {
+    button.addEventListener('click', () => {
+      activeIssueFilter = button.getAttribute('data-issue');
+      issuesPagination.page = 1;
+      renderIssuesView();
+    });
+  });
+
+  const query = searchQuery.toLowerCase();
+  const matching = allIssues.filter(issue => {
+    const matchesFilter = activeIssueFilter === 'all' || issue.code === activeIssueFilter;
+    const matchesSearch = !query || [issue.url, issue.label, issue.detail, issue.severity].some(value => String(value || '').toLowerCase().includes(query));
+    return matchesFilter && matchesSearch;
+  });
+
+  if (!matching.length) {
+    issuesTableBody.innerHTML = `<tr class="empty-state-row"><td colspan="5"><div class="empty-state"><p>${allIssues.length ? 'No issues match the selected filter or search.' : 'No SEO issues found in the crawled pages.'}</p></div></td></tr>`;
+    updatePagination(issuesPaginationControls, issuesPagination, 0, { start: 0, totalPages: 1 }, 'issues');
+    return;
+  }
+
+  const pageInfo = paginateRows(matching, issuesPagination);
+  updatePagination(issuesPaginationControls, issuesPagination, matching.length, pageInfo, 'issues');
+  issuesTableBody.innerHTML = pageInfo.rows.map(issue => `
+    <tr data-url="${encodeURIComponent(issue.url)}">
+      <td><span class="issue-severity severity-${issue.severity.toLowerCase()}">${issue.severity}</span></td>
+      <td><strong>${issue.label}</strong><br><span class="issue-description">${issue.description}</span></td>
+      <td class="url-cell" title="${issue.url}">${issue.url}</td>
+      <td class="issue-detail" title="${issue.detail}">${issue.detail}</td>
+      <td style="text-align: right;"><button class="btn btn-sm btn-outline inspect-btn">Inspect</button></td>
+    </tr>
+  `).join('');
+
+  document.querySelectorAll('#issuesTableBody tr[data-url]').forEach(row => {
+    row.addEventListener('click', () => {
+      const page = crawlResults.find(result => result.url === decodeURIComponent(row.getAttribute('data-url')));
+      if (page) openDetailModal(page);
+    });
+  });
+}
+
+// VIEW 4: Page Content & SEO Text Explorer
 function renderContentView() {
   if (crawlResults.length === 0) {
     contentExplorerLayout.innerHTML = `
@@ -1286,12 +1446,16 @@ resetBtn.addEventListener('click', async () => {
     await crawlerFetch('/api/crawler/reset', { method: 'POST' });
   } catch (e) {}
 
-  crawlResults = [];
-  allDiscoveredLinks = [];
+      crawlResults = [];
+      allDiscoveredLinks = [];
+      activeIssueFilter = 'all';
+      issuesPagination.page = 1;
   activeEngine = null;
   searchQuery = '';
   tableSearch.value = '';
   activeFilter = 'all';
+  activeIssueFilter = 'all';
+  issuesPagination.page = 1;
 
   filterTabs.forEach(p => {
     if (p.getAttribute('data-filter') === 'all') {
@@ -1340,6 +1504,7 @@ filterTabs.forEach(pill => {
 
 bindPaginationControls(pagesPaginationControls, pagesPagination, renderPagesTable);
 bindPaginationControls(linksPaginationControls, linksPagination, renderAllLinksTable);
+bindPaginationControls(issuesPaginationControls, issuesPagination, renderIssuesView);
 bindPaginationControls(contentPaginationControls, contentPagination, renderContentView);
 
 // Initialize on Load
