@@ -22,6 +22,9 @@ const MAX_CONCURRENT_CRAWLS = boundedInteger(process.env.MAX_CONCURRENT_CRAWLS, 
 const MAX_WORKERS_PER_CRAWL = boundedInteger(process.env.MAX_WORKERS_PER_CRAWL, 1, 1, 3);
 const LINK_CHECK_CONCURRENCY = boundedInteger(process.env.LINK_CHECK_CONCURRENCY, 6, 1, 12);
 const LINK_CHECK_DEADLINE_MS = boundedInteger(process.env.LINK_CHECK_DEADLINE_MS, 30000, 5000, 120000);
+// A no-limit crawl runs until its queue is empty, but this ceiling prevents one
+// malformed or unexpectedly huge site from consuming the whole hosting plan.
+const MAX_UNLIMITED_CRAWL_PAGES = boundedInteger(process.env.MAX_UNLIMITED_CRAWL_PAGES, 50000, 1000, 250000);
 const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v4';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
@@ -272,6 +275,7 @@ function getCrawlCapacity() {
     maxConcurrentCrawls: MAX_CONCURRENT_CRAWLS,
     availableSlots: Math.max(0, MAX_CONCURRENT_CRAWLS - activeCrawls),
     maxWorkersPerCrawl: MAX_WORKERS_PER_CRAWL,
+    maxUnlimitedCrawlPages: MAX_UNLIMITED_CRAWL_PAGES,
     linkCheckConcurrency: LINK_CHECK_CONCURRENCY,
     linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
   };
@@ -349,7 +353,8 @@ app.post('/api/crawler/start', async (req, res) => {
       seedUrl: requestedSeedUrl,
       crawlScope = 'domain',
       maxDepth = 3,
-      maxPages = 50,
+      maxPages: requestedMaxPages = 50,
+      noPageLimit = false,
       concurrency: requestedConcurrency = 1,
       customContentSelector = '',
       excludePatterns = [],
@@ -372,12 +377,17 @@ app.post('/api/crawler/start', async (req, res) => {
       MAX_WORKERS_PER_CRAWL,
       boundedInteger(requestedConcurrency, 1, 1, MAX_WORKERS_PER_CRAWL)
     );
+    const crawlWithoutPageLimit = crawlScope !== 'single-url' && noPageLimit === true;
+    const maxPages = crawlWithoutPageLimit
+      ? MAX_UNLIMITED_CRAWL_PAGES
+      : boundedInteger(requestedMaxPages, 50, 1, MAX_UNLIMITED_CRAWL_PAGES);
 
     const crawler = new SiteCrawler({
       seedUrl,
       crawlScope,
       maxDepth,
       maxPages,
+      noPageLimit: crawlWithoutPageLimit,
       concurrency,
       customContentSelector,
       excludePatterns,

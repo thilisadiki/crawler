@@ -5,6 +5,7 @@ export interface CrawlConfig {
   seedUrl: string;
   crawlScope: CrawlScope;
   maxPages: number;
+  noPageLimit: boolean;
   maxDepth: number;
   concurrency: number;
   delayBetweenRequestsMs: number;
@@ -33,6 +34,7 @@ export interface CrawlCapacity {
   maxConcurrentCrawls: number;
   availableSlots: number;
   maxWorkersPerCrawl: number;
+  maxUnlimitedCrawlPages?: number;
 }
 
 export interface EngineStatus {

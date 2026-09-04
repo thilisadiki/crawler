@@ -27,6 +27,7 @@ The dashboard is designed for on-demand audits. Each browser tab receives its ow
 - Extracts page title, meta description, canonical URL, robots directives, Open Graph metadata, H1–H3 headings, word count, image count, full page text, and links.
 - Detects a custom content area using a supplied CSS selector or a built-in SEO-content selector list.
 - Crawls by URL scope, depth, page limit, inclusion/exclusion rules, and optional `robots.txt` rules.
+- Multi-page scopes can use **No page limit** to crawl until the queue is exhausted. A server-side safety cap (default: 50,000 pages) still protects the hosting plan; set `MAX_UNLIMITED_CRAWL_PAGES` to adjust it.
 - Classifies internal, external, nofollow, mailto, tel, anchor/script, and invalid links.
 - Checks link status codes with bounded parallel `HEAD`/`GET` requests.
 - Supports geography presets, an optional proxy, auto-scrolling, and redirect guard settings.

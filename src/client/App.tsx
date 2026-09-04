@@ -11,7 +11,7 @@ import type { CrawlConfig, CrawlPage, CrawlScope } from './types/crawl';
 import './styles.css';
 
 const DEFAULT_CONFIG: CrawlConfig = {
-  seedUrl: '', crawlScope: 'single-url', maxPages: 1, maxDepth: 0,
+  seedUrl: '', crawlScope: 'single-url', maxPages: 1, noPageLimit: false, maxDepth: 0,
   concurrency: 1, delayBetweenRequestsMs: 500, autoScroll: true,
   customContentSelector: '', excludePatterns: [], includePatterns: [],
   respectRobotsTxt: false, region: 'auto', proxy: '', blockCrossDomainRedirects: true
@@ -85,6 +85,7 @@ export default function App() {
   const [explorerView, setExplorerView] = useState<'pages' | 'links' | 'resources' | 'issues' | 'content' | 'history'>('pages');
   const running = crawler.state === 'running' || crawler.state === 'paused' || crawler.state === 'stopping';
   const maxWorkers = crawler.capacity?.maxWorkersPerCrawl || 1;
+  const unlimitedSafetyCap = crawler.capacity?.maxUnlimitedCrawlPages || 50000;
   const pages = useMemo(() => crawler.pages.filter(page => {
     const query = search.trim().toLowerCase();
     const searchable = `${page.url} ${page.title || ''} ${page.statusCode || ''}`.toLowerCase();
@@ -119,6 +120,7 @@ export default function App() {
       // The dashboard begins in single-URL mode (1 page). Restore the legacy
       // 50-page default the first time the user changes to a broader scope.
       maxPages: single ? 1 : (current.crawlScope === 'single-url' ? 50 : Math.max(2, current.maxPages)),
+      noPageLimit: single ? false : current.noPageLimit,
       // Keep a single-page audit at depth 0, but restore the legacy default
       // of three link levels when entering a multi-page crawl scope.
       maxDepth: single ? 0 : (current.crawlScope === 'single-url' ? 3 : Math.max(1, current.maxDepth))
@@ -138,7 +140,8 @@ export default function App() {
           <div className="core-fields">
             <label className="wide">Target address<input required value={config.seedUrl} onChange={event => update('seedUrl', event.target.value)} placeholder="graduateshub.org or https://www.example.com/section/" disabled={running} /></label>
             <label>Scope<select value={config.crawlScope} onChange={event => setScope(event.target.value as CrawlScope)} disabled={running}><option value="single-url">Single URL audit</option><option value="domain">Exact hostname</option><option value="subpath">Subfolder / path only</option><option value="subdomains">Domain & subdomains</option></select></label>
-            <label>Page limit<input type="number" min="1" max="10000" value={config.maxPages} disabled={running || config.crawlScope === 'single-url'} onChange={event => update('maxPages', numberValue(event.target.value, 1))} /></label>
+            <label>Page limit<input type="number" min="1" max={unlimitedSafetyCap} required={!config.noPageLimit} value={config.maxPages || ''} disabled={running || config.crawlScope === 'single-url' || config.noPageLimit} onChange={event => update('maxPages', event.target.value === '' ? 0 : numberValue(event.target.value, 1))} /></label>
+            <label className="check page-limit-toggle" title={`Crawls until the queue is empty, up to the server safety cap of ${unlimitedSafetyCap.toLocaleString()} pages.`}><input type="checkbox" checked={config.noPageLimit} disabled={running || config.crawlScope === 'single-url'} onChange={event => update('noPageLimit', event.target.checked)} /> No page limit</label>
           </div>
           {advanced && <div className="advanced-grid">
             <label>Max crawl depth<input type="number" min="0" max="20" value={config.maxDepth} disabled={running || config.crawlScope === 'single-url'} onChange={event => update('maxDepth', numberValue(event.target.value, 0))} /></label>
@@ -158,7 +161,7 @@ export default function App() {
         {crawler.error && <p className="error-message" role="alert">{crawler.error}</p>}
       </section>
       <section className="stat-grid" aria-label="Crawl summary">
-        <Stat label="Pages audited" value={crawler.stats.pagesCrawled} detail={`${Math.min(100, Math.round((crawler.stats.pagesCrawled / Math.max(1, config.maxPages)) * 100))}% of limit`} />
+        <Stat label="Pages audited" value={crawler.stats.pagesCrawled} detail={config.noPageLimit ? `Until queue empty • ${unlimitedSafetyCap.toLocaleString()} safety cap` : `${Math.min(100, Math.round((crawler.stats.pagesCrawled / Math.max(1, config.maxPages)) * 100))}% of limit`} />
         <Stat label="Pending queue" value={crawler.queueLength} detail={`${crawler.capacity?.availableSlots ?? '—'} crawl slot(s) free`} />
         <Stat label="Discovered links" value={(crawler.stats.internalLinksCount || 0) + (crawler.stats.externalLinksCount || 0)} detail={`${crawler.stats.externalLinksCount || 0} external`} />
         <Stat label="Content area coverage" value={`${crawler.pages.length ? Math.round((contentPages / crawler.pages.length) * 100) : 0}%`} detail={`${contentPages} pages verified`} />

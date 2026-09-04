@@ -14,6 +14,7 @@ export class SiteCrawler extends EventEmitter {
     this.crawlScope = options.crawlScope || 'domain'; // 'single-url' | 'subpath' | 'domain' | 'subdomains'
     this.maxDepth = options.crawlScope === 'single-url' ? 0 : (options.maxDepth !== undefined ? parseInt(options.maxDepth, 10) : 3);
     this.maxPages = options.crawlScope === 'single-url' ? 1 : (options.maxPages !== undefined ? parseInt(options.maxPages, 10) : 50);
+    this.noPageLimit = options.crawlScope !== 'single-url' && options.noPageLimit === true;
     const requestedConcurrency = options.concurrency !== undefined ? parseInt(options.concurrency, 10) : 1;
     this.concurrency = Number.isFinite(requestedConcurrency) ? Math.min(5, Math.max(1, requestedConcurrency)) : 1;
     this.pageTimeoutMs = options.pageTimeoutMs || 30000;
@@ -1063,6 +1064,7 @@ export class SiteCrawler extends EventEmitter {
       crawlScope: this.crawlScope,
       maxDepth: this.maxDepth,
       maxPages: this.maxPages,
+      noPageLimit: this.noPageLimit,
       concurrency: this.concurrency,
       respectRobotsTxt: this.respectRobotsTxt,
       customContentSelector: this.customContentSelector,
