@@ -87,7 +87,44 @@ async function runTests() {
   assert.strictEqual(excludeCrawler.isUrlAllowedInScope('https://example.com/other/page'), true, 'Should be allowed');
   console.log('✅ Exclusion filter tests passed');
 
-  console.log('--- 5. Testing Browser Disconnect Detection ---');
+  console.log('--- 5. Testing Bare-Domain to WWW Redirect Scope ---');
+  const redirectScopeCrawler = new SiteCrawler({
+    seedUrl: 'https://example.co.za',
+    crawlScope: 'domain'
+  });
+  assert.strictEqual(
+    redirectScopeCrawler.adoptSeedRedirect('https://www.example.co.za/', 0),
+    true,
+    'A same-site www redirect should become the effective crawl origin'
+  );
+  assert.strictEqual(redirectScopeCrawler.baseHostname, 'www.example.co.za', 'The effective hostname should be adopted');
+  assert.strictEqual(
+    redirectScopeCrawler.isUrlAllowedInScope('https://www.example.co.za/next-page'),
+    true,
+    'Links on the effective www hostname should remain in domain scope'
+  );
+  assert.strictEqual(
+    redirectScopeCrawler.isUrlAllowedInScope('https://example.co.za/alternate'),
+    true,
+    'Bare and www hostname aliases should be treated as one site'
+  );
+  assert.strictEqual(
+    redirectScopeCrawler.isUrlAllowedInScope('https://account.example.co.za/login'),
+    false,
+    'Unrelated subdomains must remain outside hostname scope'
+  );
+  assert.strictEqual(
+    redirectScopeCrawler.adoptSeedRedirect('https://unrelated-site.example/', 0),
+    false,
+    'A cross-site redirect must never expand the crawl scope'
+  );
+  const normalizedAliases = redirectScopeCrawler.normalizeInternalLinkAliases([{
+    url: 'https://example.co.za/contact', linkType: 'External', isInternal: false, isValidHttp: true
+  }]);
+  assert.strictEqual(normalizedAliases[0].linkType, 'Internal', 'Bare/www alias links should be reclassified as internal');
+  console.log('✅ Redirect scope tests passed');
+
+  console.log('--- 6. Testing Browser Disconnect Detection ---');
   assert.strictEqual(
     excludeCrawler.isBrowserDisconnectError(new Error('browserContext.newPage: Target page, context or browser has been closed')),
     true,
@@ -100,7 +137,7 @@ async function runTests() {
   );
   console.log('✅ Browser disconnect detection tests passed');
 
-  console.log('--- 6. Testing Immediate Crawl Cancellation State ---');
+  console.log('--- 7. Testing Immediate Crawl Cancellation State ---');
   const cancellationCrawler = new SiteCrawler({ seedUrl: 'https://example.com' });
   cancellationCrawler.isRunning = true;
   cancellationCrawler.abortController = new AbortController();
@@ -111,7 +148,7 @@ async function runTests() {
   assert.strictEqual(cancellationCrawler.queue.length, 0, 'Stop should discard queued URLs');
   console.log('✅ Immediate cancellation state test passed');
 
-  console.log('--- 7. Testing Content-Area Selector and Heuristic Detection ---');
+  console.log('--- 8. Testing Content-Area Selector and Heuristic Detection ---');
   const contentWords = Array.from({ length: 180 }, () => 'meaningful').join(' ');
   const selectorResult = Extractor.extractFromHtml(`
     <html><body><nav>Home Casino Sport</nav><div class="copy-section"><h2>Download the app</h2><p>${contentWords}</p><p>Useful editorial copy.</p></div><footer>Terms Privacy</footer></body></html>

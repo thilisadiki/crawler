@@ -135,6 +135,62 @@ export class SiteCrawler extends EventEmitter {
     return parts.slice(-2).join('.');
   }
 
+  /**
+   * `example.com` and `www.example.com` are commonly two entry points for the
+   * same site. Keep that narrow exception separate from the broader
+   * "subdomains" scope so a seed cannot silently expand to arbitrary hosts.
+   */
+  isWwwAlias(hostnameA, hostnameB) {
+    const stripWww = hostname => String(hostname || '').toLowerCase().replace(/^www\./, '');
+    return Boolean(hostnameA && hostnameB && stripWww(hostnameA) === stripWww(hostnameB));
+  }
+
+  /**
+   * A homepage often redirects from http to https and/or the bare hostname to
+   * www. The initial URL is only a request target; for crawling we need the
+   * effective first-page origin so that its own navigation is not marked as
+   * external. Never adopt an unrelated redirect.
+   */
+  adoptSeedRedirect(effectiveUrl, depth) {
+    if (depth !== 0 || !this.baseHostname) return false;
+    try {
+      const effective = new URL(effectiveUrl);
+      if (!this.isWwwAlias(this.baseHostname, effective.hostname)) return false;
+
+      const previousHostname = this.baseHostname;
+      const previousOrigin = this.baseOrigin;
+      this.baseOrigin = effective.origin;
+      this.baseHostname = effective.hostname;
+      this.basePathname = effective.pathname.endsWith('/')
+        ? effective.pathname
+        : effective.pathname.replace(/\/[^/]*$/, '/') || '/';
+      this.rootDomain = this.getRootDomain(effective.hostname);
+      this.browserManager.targetHostname = effective.hostname;
+
+      return previousHostname !== effective.hostname || previousOrigin !== effective.origin;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Extraction sees the page's real URL, but links may still point back to a
+   * bare/www alias. Reclassify just that alias as internal before scope and
+   * queueing decisions are made.
+   */
+  normalizeInternalLinkAliases(links = []) {
+    return links.map(link => {
+      if (!link?.isValidHttp || !link.url) return link;
+      try {
+        const target = new URL(link.url);
+        if (this.isWwwAlias(this.baseHostname, target.hostname)) {
+          return { ...link, linkType: 'Internal', isInternal: true };
+        }
+      } catch {}
+      return link;
+    });
+  }
+
   async start() {
     if (this.isRunning) return;
     this.isRunning = true;
@@ -303,16 +359,21 @@ export class SiteCrawler extends EventEmitter {
       crawlResult.statusText = response.statusText;
       crawlResult.responseTimeMs = Date.now() - pageStartTime;
 
+      const effectiveUrl = response.url || url;
+      this.adoptSeedRedirect(effectiveUrl, depth);
+
       const html = await response.text();
       if (this.isCancellationRequested()) return;
-      const extracted = Extractor.extractFromHtml(html, response.url || url, this.baseOrigin, {
+      const extracted = Extractor.extractFromHtml(html, effectiveUrl, this.baseOrigin, {
         customSelector: this.customContentSelector,
         cheerio
       });
 
+      extracted.links = this.normalizeInternalLinkAliases(extracted.links);
+
       Object.assign(crawlResult, extracted);
       crawlResult.h1 = (extracted.h1List && extracted.h1List[0]) || '';
-      crawlResult.url = response.url || url;
+      crawlResult.url = effectiveUrl;
 
       // Verify HTTP status codes in parallel
       if (extracted.links && extracted.links.length > 0) {
@@ -468,6 +529,9 @@ export class SiteCrawler extends EventEmitter {
 
       if (this.isCancellationRequested()) return;
 
+      const effectiveUrl = page.url() || url;
+      this.adoptSeedRedirect(effectiveUrl, depth);
+
       if (mainResponse) {
         crawlResult.statusCode = mainResponse.status();
         crawlResult.statusText = mainResponse.statusText();
@@ -496,10 +560,11 @@ export class SiteCrawler extends EventEmitter {
       if (this.isCancellationRequested()) return;
 
       // Extract all page metadata, links, and custom content
-      const extracted = await Extractor.extractPageData(page, url, this.baseOrigin, {
+      const extracted = await Extractor.extractPageData(page, effectiveUrl, this.baseOrigin, {
         customSelector: this.customContentSelector
       });
       if (this.isCancellationRequested()) return;
+      extracted.links = this.normalizeInternalLinkAliases(extracted.links);
       page.off('response', captureResourceResponse);
 
       // The page is no longer needed once its DOM has been extracted. Releasing it
@@ -515,6 +580,7 @@ export class SiteCrawler extends EventEmitter {
       if (this.isCancellationRequested()) return;
 
       crawlResult.title = extracted.title;
+      crawlResult.url = effectiveUrl;
       crawlResult.metaDescription = extracted.metaDescription;
       crawlResult.canonical = extracted.canonical;
       crawlResult.metaRobots = extracted.metaRobots;
@@ -540,7 +606,7 @@ export class SiteCrawler extends EventEmitter {
         if (link.isInsideCustom) customLinksCount++;
 
         const linkRecord = {
-          sourceUrl: url,
+          sourceUrl: crawlResult.url,
           targetUrl: link.url,
           rawHref: link.rawHref,
           anchorText: link.anchorText,
@@ -787,11 +853,11 @@ export class SiteCrawler extends EventEmitter {
       if (this.crawlScope === 'single-url') {
         return false;
       } else if (this.crawlScope === 'subpath') {
-        if (urlObj.hostname !== this.baseHostname || !urlObj.pathname.startsWith(this.basePathname)) {
+        if (!this.isWwwAlias(urlObj.hostname, this.baseHostname) || !urlObj.pathname.startsWith(this.basePathname)) {
           return false;
         }
       } else if (this.crawlScope === 'domain') {
-        if (urlObj.hostname !== this.baseHostname) {
+        if (!this.isWwwAlias(urlObj.hostname, this.baseHostname)) {
           return false;
         }
       } else if (this.crawlScope === 'subdomains') {
