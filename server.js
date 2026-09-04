@@ -7,6 +7,8 @@ import { Extractor } from './src/engine/extractor.js';
 import { Exporter } from './src/engine/exporter.js';
 import { crawlStorage } from './src/storage/database.js';
 import { CrawlNetworkPolicy, UnsafeCrawlTargetError } from './src/security/network-policy.js';
+import { validateCrawlRequest, CrawlRequestValidationError } from './src/security/crawl-request-validation.js';
+import { GEO_PRESETS } from './src/engine/geoPresets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,13 +37,17 @@ const PRIVATE_ACCESS_CONFIGURED = Boolean(ADMIN_PASSWORD && ADMIN_SESSION_SECRET
 const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
 const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const CRAWL_START_MAX_ATTEMPTS = 8;
+const CRAWL_START_WINDOW_MS = 15 * 60 * 1000;
 const ACTIVE_SESSION_WINDOW_MS = 2 * 60 * 1000;
 const SESSION_ACTIVITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_SESSION_RECORDS = 100;
 const adminLoginAttempts = new Map();
+const crawlStartAttempts = new Map();
 const adminSessions = new Map();
 const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://workva.co.za').replace(/\/$/, '');
 const crawlNetworkPolicy = new CrawlNetworkPolicy();
+const ALLOWED_CRAWL_REGIONS = new Set(['auto', ...Object.keys(GEO_PRESETS)]);
 
 function preventIndexing(req, res, next) {
   // robots.txt is advisory; this response header is the crawler-enforced layer.
@@ -211,6 +217,45 @@ function safeNextPath(value, fallback = '/') {
   return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.includes('\\') ? value : fallback;
 }
 
+function requestOrigin(req) {
+  const forwardedHost = req.get('x-forwarded-host');
+  const host = (forwardedHost || req.get('host') || '').split(',')[0].trim();
+  const forwardedProtocol = req.get('x-forwarded-proto');
+  const protocol = (forwardedProtocol || (req.secure ? 'https' : 'http')).split(',')[0].trim();
+  return host ? `${protocol}://${host}` : '';
+}
+
+// SameSite cookies already mitigate CSRF. This adds an Origin check for normal
+// browser requests, while keeping command-line diagnostics possible when no
+// Origin header is sent at all.
+function requireSameOrigin(req, res, next) {
+  const origin = req.get('origin');
+  if (!origin) return next();
+  const allowedOrigins = new Set([requestOrigin(req), PUBLIC_APP_URL]);
+  if (!allowedOrigins.has(origin)) return res.status(403).json({ error: 'Cross-site requests are not allowed.' });
+  return next();
+}
+
+function consumeRateLimit(store, key, maximum, windowMs) {
+  const now = Date.now();
+  const existing = store.get(key);
+  const record = !existing || existing.resetAt <= now
+    ? { count: 0, resetAt: now + windowMs }
+    : existing;
+  record.count++;
+  store.set(key, record);
+  return { allowed: record.count <= maximum, retryAfterSeconds: Math.max(1, Math.ceil((record.resetAt - now) / 1000)) };
+}
+
+function limitCrawlStarts(req, res, next) {
+  const adminSession = getAdminSession(req, false);
+  const key = `${adminSession?.id || 'unknown'}:${getClientIp(req)}`;
+  const rate = consumeRateLimit(crawlStartAttempts, key, CRAWL_START_MAX_ATTEMPTS, CRAWL_START_WINDOW_MS);
+  if (rate.allowed) return next();
+  res.setHeader('Retry-After', rate.retryAfterSeconds);
+  return res.status(429).json({ error: `Too many crawl starts. Try again in ${Math.ceil(rate.retryAfterSeconds / 60)} minute(s).` });
+}
+
 function requireDashboardAccess(req, res, next) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
@@ -263,7 +308,7 @@ app.get('/api/admin/session', (req, res) => {
   res.json({ configured: PRIVATE_ACCESS_CONFIGURED, authenticated: hasValidAdminSession(req) });
 });
 
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', requireSameOrigin, (req, res) => {
   if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).json({ error: 'Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET.' });
   const { key, attempt } = getLoginAttempt(req);
   if (attempt.count >= ADMIN_LOGIN_MAX_ATTEMPTS) {
@@ -281,7 +326,7 @@ app.post('/api/admin/login', (req, res) => {
   return res.json({ success: true });
 });
 
-app.post('/api/admin/logout', requireAdmin, (req, res) => {
+app.post('/api/admin/logout', requireAdmin, requireSameOrigin, (req, res) => {
   const session = getAdminSession(req, false);
   if (session) session.endedAt = Date.now();
   res.clearCookie('omnicrawl_admin', adminCookieOptions(req));
@@ -298,7 +343,7 @@ app.get('/api/admin/database-overview', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/admin/crawl-history/clear', requireAdmin, async (req, res) => {
+app.post('/api/admin/crawl-history/clear', requireAdmin, requireSameOrigin, async (req, res) => {
   try {
     if (runningCrawlers.size > 0) {
       return res.status(409).json({ error: 'Stop and allow all active crawls to finish saving before clearing history.' });
@@ -325,7 +370,7 @@ app.get('/api/admin/sessions', requireAdmin, (req, res) => {
   res.json({ sessions, activeWindowSeconds: ACTIVE_SESSION_WINDOW_MS / 1000, retentionDays: SESSION_ACTIVITY_RETENTION_MS / (24 * 60 * 60 * 1000) });
 });
 
-app.post('/api/admin/sessions/:sessionId/revoke', requireAdmin, (req, res) => {
+app.post('/api/admin/sessions/:sessionId/revoke', requireAdmin, requireSameOrigin, (req, res) => {
   const sessionId = req.params.sessionId;
   if (!/^[a-zA-Z0-9_-]{8,128}$/.test(sessionId)) return res.status(400).json({ error: 'Invalid session identifier.' });
   const currentAdminSession = getAdminSession(req, false);
@@ -438,7 +483,7 @@ function getCrawlCapacity() {
   };
 }
 
-app.use('/api/crawler', requireAdmin, trackDashboardSession);
+app.use('/api/crawler', requireAdmin, trackDashboardSession, requireSameOrigin);
 app.use('/api/export', requireAdmin, trackDashboardSession);
 
 function broadcastSSE(sessionId, eventType, data) {
@@ -493,7 +538,7 @@ app.get('/api/crawler/stream', (req, res) => {
 });
 
 // Start Crawl
-app.post('/api/crawler/start', async (req, res) => {
+app.post('/api/crawler/start', limitCrawlStarts, async (req, res) => {
   try {
     pruneCrawlerSessions();
     const { sessionId, crawler: existingCrawler } = getSessionCrawler(req);
@@ -508,22 +553,33 @@ app.post('/api/crawler/start', async (req, res) => {
       });
     }
 
+    let crawlRequest;
+    try {
+      crawlRequest = validateCrawlRequest(req.body, {
+        maxWorkersPerCrawl: MAX_WORKERS_PER_CRAWL,
+        maxUnlimitedCrawlPages: MAX_UNLIMITED_CRAWL_PAGES,
+        allowedRegions: ALLOWED_CRAWL_REGIONS
+      });
+    } catch (error) {
+      const message = error instanceof CrawlRequestValidationError ? error.message : 'Invalid crawl configuration.';
+      return res.status(400).json({ error: message });
+    }
     const {
-      seedUrl: requestedSeedUrl,
-      crawlScope = 'domain',
-      maxDepth = 3,
-      maxPages: requestedMaxPages = 50,
-      noPageLimit = false,
-      concurrency: requestedConcurrency = 1,
-      customContentSelector = '',
-      excludePatterns = [],
-      includePatterns = [],
-      respectRobotsTxt = false,
-      autoScroll = true,
-      delayBetweenRequestsMs = 500,
-      region = 'auto',
-      blockCrossDomainRedirects = true
-    } = req.body || {};
+      crawlScope,
+      maxDepth,
+      maxPages: requestedMaxPages,
+      noPageLimit,
+      concurrency: requestedConcurrency,
+      customContentSelector,
+      excludePatterns,
+      includePatterns,
+      respectRobotsTxt,
+      autoScroll,
+      delayBetweenRequestsMs,
+      region,
+      blockCrossDomainRedirects
+    } = crawlRequest;
+    const requestedSeedUrl = req.body.seedUrl;
 
     const seedUrl = Extractor.normalizeSeedUrl(requestedSeedUrl);
     if (!seedUrl) {
@@ -536,17 +592,11 @@ app.post('/api/crawler/start', async (req, res) => {
       return res.status(400).json({ error: message });
     }
 
-    if (typeof req.body?.proxy === 'string' && req.body.proxy.trim()) {
-      return res.status(400).json({ error: 'Custom proxy endpoints are disabled for security. CrawlLoom uses the hosting provider’s own network connection.' });
-    }
-    const concurrency = Math.min(
-      MAX_WORKERS_PER_CRAWL,
-      boundedInteger(requestedConcurrency, 1, 1, MAX_WORKERS_PER_CRAWL)
-    );
+    const concurrency = requestedConcurrency;
     const crawlWithoutPageLimit = crawlScope !== 'single-url' && noPageLimit === true;
     const maxPages = crawlWithoutPageLimit
       ? MAX_UNLIMITED_CRAWL_PAGES
-      : boundedInteger(requestedMaxPages, 50, 1, MAX_UNLIMITED_CRAWL_PAGES);
+      : requestedMaxPages;
 
     const crawler = new SiteCrawler({
       seedUrl,

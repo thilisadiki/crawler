@@ -7,6 +7,7 @@ import { Exporter } from './src/engine/exporter.js';
 import { Extractor } from './src/engine/extractor.js';
 import { LinkStatusChecker } from './src/engine/statusChecker.js';
 import { CrawlNetworkPolicy, isBlockedIpAddress } from './src/security/network-policy.js';
+import { CrawlRequestValidationError, validateCrawlRequest } from './src/security/crawl-request-validation.js';
 
 async function runTests() {
   const publicTestPolicy = new CrawlNetworkPolicy({
@@ -285,6 +286,36 @@ async function runTests() {
     'A hostname resolving to a private address must be blocked'
   );
   console.log('✅ Internal network protection tests passed');
+
+  console.log('--- 12. Testing Crawl Request Limits ---');
+  const validationOptions = {
+    maxWorkersPerCrawl: 3,
+    maxUnlimitedCrawlPages: 50000,
+    allowedRegions: new Set(['auto', 'ZA', 'GH'])
+  };
+  const validated = validateCrawlRequest({
+    crawlScope: 'domain', maxDepth: 3, maxPages: 50, concurrency: 2,
+    customContentSelector: '.page-content', excludePatterns: ['/account'],
+    includePatterns: ['/news'], region: 'za', respectRobotsTxt: true
+  }, validationOptions);
+  assert.strictEqual(validated.region, 'ZA', 'Supported regions should normalize to their canonical code');
+  assert.strictEqual(validated.concurrency, 2, 'A valid worker value should be retained');
+  await assert.rejects(
+    async () => validateCrawlRequest({ crawlScope: 'domain', maxDepth: 99 }, validationOptions),
+    CrawlRequestValidationError,
+    'Depth above the server maximum must be rejected'
+  );
+  await assert.rejects(
+    async () => validateCrawlRequest({ crawlScope: 'domain', excludePatterns: ['(a+)+'] }, validationOptions),
+    CrawlRequestValidationError,
+    'Obvious catastrophic regular expressions must be rejected'
+  );
+  await assert.rejects(
+    async () => validateCrawlRequest({ crawlScope: 'domain', proxy: 'http://proxy.internal:8080' }, validationOptions),
+    CrawlRequestValidationError,
+    'Request-supplied proxies must be rejected'
+  );
+  console.log('✅ Crawl request limit tests passed');
 
   console.log('\n🎉 ALL AUTOMATED TESTS PASSED SUCCESSFULLY!');
 }
