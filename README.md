@@ -1,6 +1,6 @@
-# OmniCrawl
+# CrawlLoom
 
-OmniCrawl is a browser-based SEO crawler for auditing server-rendered and JavaScript-rendered websites. It renders pages in Chromium where possible, extracts SEO metadata and content, discovers links, checks link status codes, and exports the audit as CSV or a multi-sheet Excel workbook.
+CrawlLoom is a browser-based SEO crawler for auditing server-rendered and JavaScript-rendered websites. It renders pages in Chromium where possible, extracts SEO metadata and content, discovers links, checks link status codes, and exports the audit as CSV or a multi-sheet Excel workbook.
 
 The dashboard is designed for on-demand audits. Each browser tab receives its own crawl session, results, controls, real-time updates, and exports.
 
@@ -100,7 +100,7 @@ On macOS or Windows, if the app reports that no local Chromium executable is ava
 npx playwright install chromium
 ```
 
-On Linux, OmniCrawl prefers `@sparticuz/chromium`, which is intended for environments where desktop GTK libraries cannot be installed.
+On Linux, CrawlLoom prefers `@sparticuz/chromium`, which is intended for environments where desktop GTK libraries cannot be installed.
 
 ## Using the dashboard
 
@@ -136,7 +136,7 @@ On Linux, OmniCrawl prefers `@sparticuz/chromium`, which is intended for environ
 
 ### Content area detection
 
-If no custom selector is supplied, OmniCrawl looks for these common content containers in order:
+If no custom selector is supplied, CrawlLoom looks for these common content containers in order:
 
 ```text
 .page-text
@@ -163,7 +163,7 @@ If no custom selector is supplied, OmniCrawl looks for these common content cont
 article
 ```
 
-If no known selector matches, OmniCrawl applies a conservative content-area heuristic. It selects a visible, text-rich container with headings or structured copy and low link density, while excluding navigation, cookie banners, sidebars, betting widgets, and footers. Heuristic matches are shown as **Auto-found** in the table and **Content Area Auto-detected** in the inspector.
+If no known selector matches, CrawlLoom applies a conservative content-area heuristic. It selects a visible, text-rich container with headings or structured copy and low link density, while excluding navigation, cookie banners, sidebars, betting widgets, and footers. Heuristic matches are shown as **Auto-found** in the table and **Content Area Auto-detected** in the inspector.
 
 For a reliable content-area audit, provide the site's exact selector rather than relying on auto-detection. A custom selector overrides automatic detection for the entire crawl.
 
@@ -171,7 +171,7 @@ For a reliable content-area audit, provide the site's exact selector rather than
 
 ### Rendering flow
 
-For each page, OmniCrawl:
+For each page, CrawlLoom:
 
 1. Opens an isolated browser context and page.
 2. Navigates with `DOMContentLoaded` as the primary wait condition.
@@ -362,7 +362,7 @@ LINK_CHECK_CONCURRENCY=6
 LINK_CHECK_DEADLINE_MS=30000
 ```
 
-To enable saved crawl history, add `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` for a MySQL database in hPanel. OmniCrawl creates its own three tables on startup. Database credentials must never be committed to Git.
+To enable saved crawl history, add `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` for a MySQL database in hPanel. CrawlLoom creates its own three tables on startup. Database credentials must never be committed to Git.
 
 To clear saved history without phpMyAdmin, set `ADMIN_PASSWORD` in hPanel **Environment variables**, then deploy or restart the application. Visit `/admin` and sign in. The administration page requires typing `DELETE ALL` before it enables the permanent **Clear all saved crawl history** action. It clears only this app's saved crawl history; it does not drop the MySQL tables or change live crawler settings.
 

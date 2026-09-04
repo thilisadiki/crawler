@@ -1,7 +1,7 @@
 {
-  "name": "browser-seo-crawler",
+  "name": "crawlloom",
   "version": "1.0.0",
-  "description": "Headless Chromium browser-based crawler for dynamic JS and Kentico SEO content",
+  "description": "Browser-rendered SEO crawler for dynamic JavaScript and Kentico content",
   "main": "server.js",
   "type": "module",
   "engines": {

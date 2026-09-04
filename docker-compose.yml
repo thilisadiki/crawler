@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  omnicrawl:
+  crawlloom:
     build: .
-    container_name: omnicrawl-spider
+    container_name: crawlloom
     restart: unless-stopped
     ports:
       - "3000:3000"

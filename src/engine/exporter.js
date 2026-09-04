@@ -41,7 +41,7 @@ export class Exporter {
    */
   static async generateMultiSheetWorkbook(results, allLinks = []) {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = 'OmniCrawl Enterprise';
+    workbook.creator = 'CrawlLoom';
     workbook.created = new Date();
 
     // -------------------------------------------------------------

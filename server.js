@@ -573,7 +573,7 @@ app.get(['/api/export/workbook.xlsx', '/api/export/excel'], async (req, res) => 
   try {
     const buffer = await Exporter.generateMultiSheetWorkbook(crawler.results, crawler.allLinks);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="OmniCrawl_MultiSheet_Report_${Date.now()}.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="CrawlLoom_MultiSheet_Report_${Date.now()}.xlsx"`);
     res.send(buffer);
   } catch (err) {
     console.error('Error generating Excel workbook:', err);
@@ -616,7 +616,7 @@ app.get(['/api/export/custom-content.csv', '/api/export/kentico.csv'], (req, res
 
 app.listen(PORT, () => {
   console.log(`\n======================================================`);
-  console.log(`  🕷️ Browser SEO Spider is running!`);
+  console.log(`  🕷️ CrawlLoom is running!`);
   console.log(`  🔗 Open Dashboard: http://localhost:${PORT}`);
   console.log(`  📦 Release: ${APP_RELEASE}`);
   console.log(`  ⚙️  Crawl Capacity: ${MAX_CONCURRENT_CRAWLS} simultaneous crawl(s), ${MAX_WORKERS_PER_CRAWL} worker(s) each`);
