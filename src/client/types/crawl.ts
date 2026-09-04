@@ -75,11 +75,15 @@ export interface CrawlPage {
   statusCode?: number | null;
   title?: string;
   metaDescription?: string;
+  canonical?: string;
+  metaRobots?: string;
   h1?: string;
   h1List?: string[];
   h2List?: string[];
   responseTime?: number | null;
+  responseTimeMs?: number | null;
   wordCount?: number;
+  totalWords?: number;
   fullPageText?: string;
   error?: string;
   links?: CrawledLink[];
