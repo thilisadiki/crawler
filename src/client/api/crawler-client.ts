@@ -24,6 +24,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...init,
     headers: { 'Content-Type': 'application/json', 'X-Crawler-Session': getSessionId(), ...init.headers }
   });
+  if (response.status === 401) {
+    const next = `${window.location.pathname}${window.location.search}`;
+    window.location.assign(`/admin/login?next=${encodeURIComponent(next)}`);
+    throw new Error('Your CrawlLoom session has expired. Please sign in again.');
+  }
   const body = await response.json().catch(() => ({ error: 'The server returned an invalid response.' }));
   if (!response.ok) throw new Error(body.error || 'Crawler request failed.');
   return body as T;

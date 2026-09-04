@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
-  <title>CrawlLoom Administration</title>
+  <title>Sign in to CrawlLoom</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10172a; color: #e8eefb; }
     * { box-sizing: border-box; }
@@ -19,8 +19,8 @@
 </head>
 <body>
   <main>
-    <h1>Administration</h1>
-    <p>Sign in to manage saved crawl history.</p>
+    <h1>Sign in to CrawlLoom</h1>
+    <p>This is a private crawler. Sign in to access audits, history, and administration.</p>
     <form id="loginForm">
       <label for="password">Administrator password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
@@ -33,6 +33,8 @@
     const password = document.getElementById('password');
     const button = document.getElementById('submitButton');
     const message = document.getElementById('message');
+    const requestedNext = new URLSearchParams(window.location.search).get('next');
+    const nextPath = requestedNext && requestedNext.startsWith('/') && !requestedNext.startsWith('//') && !requestedNext.includes('\\') ? requestedNext : '/';
     form.addEventListener('submit', async event => {
       event.preventDefault();
       button.disabled = true;
@@ -44,7 +46,7 @@
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Could not sign in.');
-        window.location.assign('/admin');
+        window.location.assign(nextPath);
       } catch (error) {
         password.value = '';
         password.focus();

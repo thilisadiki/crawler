@@ -12,6 +12,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number.parseInt(value, 10);
@@ -27,7 +29,8 @@ const LINK_CHECK_DEADLINE_MS = boundedInteger(process.env.LINK_CHECK_DEADLINE_MS
 const MAX_UNLIMITED_CRAWL_PAGES = boundedInteger(process.env.MAX_UNLIMITED_CRAWL_PAGES, 50000, 1000, 250000);
 const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v4';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
+const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || '';
+const PRIVATE_ACCESS_CONFIGURED = Boolean(ADMIN_PASSWORD && ADMIN_SESSION_SECRET);
 const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
 const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -44,19 +47,24 @@ function preventIndexing(req, res, next) {
   next();
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'");
+  if (isSecureRequest(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
 app.use(['/admin', '/api', '/next', '/legacy'], preventIndexing);
 
 // React is now the production dashboard. The prior implementation stays at
 // /legacy for one release as a deliberately non-indexable rollback route.
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'next', 'index.html')));
+app.get('/', requireDashboardAccess, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'next', 'index.html')));
 app.get('/index.html', (req, res) => res.redirect(301, '/'));
-app.get('/legacy', (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'index.html')));
+app.get('/legacy', requireDashboardAccess, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'index.html')));
+app.use('/next', requireDashboardAccess);
 app.use(express.static(path.join(__dirname, 'src', 'public')));
 
 // Only public product and information pages are submitted to search engines.
@@ -110,8 +118,7 @@ function signAdminPayload(payload) {
 }
 
 function getClientIp(req) {
-  const forwarded = req.get('x-forwarded-for');
-  return (forwarded ? forwarded.split(',')[0] : req.ip || req.socket.remoteAddress || 'Unknown').trim();
+  return (req.ip || req.socket.remoteAddress || 'Unknown').trim();
 }
 
 function describeDevice(userAgent = '') {
@@ -191,8 +198,24 @@ function adminCookieOptions(req) {
 }
 
 function requireAdmin(req, res, next) {
-  if (!ADMIN_PASSWORD) return res.status(404).send('Not found');
+  if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).json({ error: 'Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET.' });
   if (!hasValidAdminSession(req)) return res.status(401).json({ error: 'Administrator login required.' });
+  res.setHeader('Cache-Control', 'no-store');
+  return next();
+}
+
+function safeNextPath(value, fallback = '/') {
+  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.includes('\\') ? value : fallback;
+}
+
+function requireDashboardAccess(req, res, next) {
+  if (!PRIVATE_ACCESS_CONFIGURED) {
+    return res.status(503).type('text/plain').send('CrawlLoom private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
+  }
+  if (!hasValidAdminSession(req)) {
+    return res.redirect(`/admin/login?next=${encodeURIComponent(safeNextPath(req.originalUrl))}`);
+  }
+  res.setHeader('Cache-Control', 'no-store');
   return next();
 }
 
@@ -218,26 +241,26 @@ function passwordsMatch(candidate) {
 // It is unavailable until an administrator password is configured in the hosting
 // environment, and every data-changing endpoint requires its signed HTTP-only cookie.
 app.get('/admin/login', (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(404).send('Not found');
-  if (hasValidAdminSession(req)) return res.redirect('/admin');
+  if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).type('text/plain').send('Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
+  if (hasValidAdminSession(req)) return res.redirect(safeNextPath(req.query.next, '/'));
   res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(path.join(__dirname, 'src', 'admin', 'login.html'));
 });
 
 app.get('/admin', (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(404).send('Not found');
-  if (!hasValidAdminSession(req)) return res.redirect('/admin/login');
+  if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).type('text/plain').send('Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
+  if (!hasValidAdminSession(req)) return res.redirect('/admin/login?next=/admin');
   res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(path.join(__dirname, 'src', 'admin', 'index.html'));
 });
 
 app.get('/api/admin/session', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ configured: Boolean(ADMIN_PASSWORD), authenticated: hasValidAdminSession(req) });
+  res.json({ configured: PRIVATE_ACCESS_CONFIGURED, authenticated: hasValidAdminSession(req) });
 });
 
 app.post('/api/admin/login', (req, res) => {
-  if (!ADMIN_PASSWORD) return res.status(404).json({ error: 'Administrator access is not configured.' });
+  if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).json({ error: 'Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET.' });
   const { key, attempt } = getLoginAttempt(req);
   if (attempt.count >= ADMIN_LOGIN_MAX_ATTEMPTS) {
     const retryAfterSeconds = Math.max(1, Math.ceil((attempt.resetAt - Date.now()) / 1000));
@@ -411,7 +434,8 @@ function getCrawlCapacity() {
   };
 }
 
-app.use('/api/crawler', trackDashboardSession);
+app.use('/api/crawler', requireAdmin, trackDashboardSession);
+app.use('/api/export', requireAdmin, trackDashboardSession);
 
 function broadcastSSE(sessionId, eventType, data) {
   const record = crawlerSessions.get(sessionId);
@@ -441,7 +465,6 @@ app.get('/api/crawler/stream', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no'); // Disables Nginx buffering on Hostinger / Cloud
-  res.setHeader('Access-Control-Allow-Origin', '*');
   res.flushHeaders();
 
   const newClient = { sessionId, res };
@@ -689,7 +712,7 @@ app.get('/api/crawler/page-html', async (req, res) => {
 });
 
 // Debug Diagnostic Endpoint
-app.get('/api/debug/browser', async (req, res) => {
+app.get('/api/debug/browser', requireAdmin, async (req, res) => {
   let browserManager = null;
   try {
     const { BrowserManager } = await import('./src/engine/browser.js');
