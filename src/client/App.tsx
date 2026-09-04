@@ -12,7 +12,9 @@ import './styles.css';
 
 const DEFAULT_CONFIG: CrawlConfig = {
   seedUrl: '', crawlScope: 'single-url', maxPages: 1, maxDepth: 0,
-  concurrency: 1, delayBetweenRequestsMs: 500, autoScroll: true
+  concurrency: 1, delayBetweenRequestsMs: 500, autoScroll: true,
+  customContentSelector: '', excludePatterns: [], includePatterns: [],
+  respectRobotsTxt: false, region: 'auto', proxy: '', blockCrossDomainRedirects: true
 };
 
 function numberValue(value: string, fallback: number) {
@@ -102,6 +104,13 @@ export default function App() {
             <label>Worker threads<input type="number" min="1" max={maxWorkers} value={config.concurrency} disabled={running} onChange={event => update('concurrency', Math.min(maxWorkers, numberValue(event.target.value, 1)))} /></label>
             <label>Rate limiter (ms)<input type="number" min="0" max="5000" step="50" value={config.delayBetweenRequestsMs} disabled={running} onChange={event => update('delayBetweenRequestsMs', numberValue(event.target.value, 500))} /></label>
             <label className="check"><input type="checkbox" checked={config.autoScroll} disabled={running} onChange={event => update('autoScroll', event.target.checked)} /> Dynamic auto-scroll</label>
+            <label className="wide-advanced">Custom content selector<input value={config.customContentSelector} disabled={running} onChange={event => update('customContentSelector', event.target.value)} placeholder="Auto-detect, or e.g. .page-text" /></label>
+            <label>Region<select value={config.region} disabled={running} onChange={event => update('region', event.target.value)}><option value="auto">Auto-detect from TLD</option><option value="ZA">South Africa</option><option value="GH">Ghana</option><option value="KE">Kenya</option><option value="NG">Nigeria</option><option value="GB">United Kingdom</option><option value="US">United States</option></select></label>
+            <label>Proxy endpoint<input value={config.proxy} disabled={running} onChange={event => update('proxy', event.target.value)} placeholder="Optional proxy URL" /></label>
+            <label className="wide-advanced">Disallow paths or regex<textarea rows={3} value={config.excludePatterns.join('\n')} disabled={running} onChange={event => update('excludePatterns', event.target.value.split('\n').map(value => value.trim()).filter(Boolean))} placeholder={'/checkout\n/account\n.*\\.pdf$'} /></label>
+            <label className="wide-advanced">Allow only paths or regex<textarea rows={3} value={config.includePatterns.join('\n')} disabled={running} onChange={event => update('includePatterns', event.target.value.split('\n').map(value => value.trim()).filter(Boolean))} placeholder={'/sports/\n/casino/'} /></label>
+            <label className="check"><input type="checkbox" checked={config.blockCrossDomainRedirects} disabled={running} onChange={event => update('blockCrossDomainRedirects', event.target.checked)} /> Lock target domain (block geo redirects)</label>
+            <label className="check"><input type="checkbox" checked={config.respectRobotsTxt} disabled={running} onChange={event => update('respectRobotsTxt', event.target.checked)} /> Enforce robots.txt</label>
           </div>}
           <div className="actions"><button className="primary" disabled={running}>▶ Execute crawl</button><button className="secondary" type="button" disabled={crawler.state !== 'running'} onClick={() => void crawler.run('pause')}>Ⅱ Pause</button><button className="secondary" type="button" disabled={crawler.state !== 'paused'} onClick={() => void crawler.run('resume')}>▶ Resume</button><button className="danger" type="button" disabled={!running || crawler.state === 'stopping'} onClick={() => void crawler.run('stop')}>■ Abort</button><button className="secondary" type="button" onClick={() => void crawler.run('reset')}>↻ Clear / reset</button></div>
         </form>

@@ -9,6 +9,13 @@ export interface CrawlConfig {
   concurrency: number;
   delayBetweenRequestsMs: number;
   autoScroll: boolean;
+  customContentSelector: string;
+  excludePatterns: string[];
+  includePatterns: string[];
+  respectRobotsTxt: boolean;
+  region: string;
+  proxy: string;
+  blockCrossDomainRedirects: boolean;
 }
 
 export interface CrawlStats {

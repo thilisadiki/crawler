@@ -32,7 +32,7 @@ and can be reached through Express at `/next/`.
 
 - typed crawler API client and crawler domain types;
 - a reusable live-state hook with SSE and a 2-second polling fallback;
-- target/scope, page-limit, and advanced execution controls;
+- target/scope, page-limit, full advanced directives, and execution controls;
 - start, pause, resume, abort, clear/reset, capacity, and engine status;
 - summary metrics, pages search/filtering, page inspection, and all exports.
 - discovered-links table backed by the canonical crawler link records, with
