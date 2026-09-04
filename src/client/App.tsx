@@ -88,9 +88,8 @@ export default function App() {
   }
 
   return <div className="app-shell">
-    <header className="topbar"><div><span className="brand-mark">⌘</span><span className="brand">CrawlLoom <small>Next dashboard preview</small></span></div><span className={`status ${crawler.state}`}><i />{statusLabel(crawler.state, crawler.engine?.mode)}</span></header>
+    <header className="topbar"><div><span className="brand-mark">⌘</span><span className="brand">CrawlLoom <small>Browser-rendered SEO crawler</small></span></div><span className={`status ${crawler.state}`}><i />{statusLabel(crawler.state, crawler.engine?.mode)}</span></header>
     <main>
-      <div className="migration-note">React migration in progress. This preview uses the same crawler API and tab session as the established dashboard; the current dashboard at <a href="/">/</a> remains the supported interface until feature parity.</div>
       <section className="card config-card">
         <div className="section-heading"><div><p className="eyebrow">Crawl target</p><h1>Start a browser-rendered audit</h1></div><button className="secondary" type="button" onClick={() => setAdvanced(open => !open)}>{advanced ? 'Hide advanced' : 'Advanced directives'}</button></div>
         <form onSubmit={submit}>
