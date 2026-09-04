@@ -43,13 +43,19 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   next();
 });
-app.use(['/admin', '/api', '/next'], preventIndexing);
+app.use(['/admin', '/api', '/next', '/legacy'], preventIndexing);
+
+// React is now the production dashboard. The prior implementation stays at
+// /legacy for one release as a deliberately non-indexable rollback route.
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'next', 'index.html')));
+app.get('/index.html', (req, res) => res.redirect(301, '/'));
+app.get('/legacy', (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'index.html')));
 app.use(express.static(path.join(__dirname, 'src', 'public')));
 
 // Only public product and information pages are submitted to search engines.
 // Administration, API and preview routes are excluded above and in robots.txt.
 app.get('/robots.txt', (req, res) => {
-  res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api\nDisallow: /next\n\nSitemap: ${PUBLIC_APP_URL}/sitemap.xml\n`);
+  res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api\nDisallow: /next\nDisallow: /legacy\n\nSitemap: ${PUBLIC_APP_URL}/sitemap.xml\n`);
 });
 
 app.get('/sitemap.xml', (req, res) => {
