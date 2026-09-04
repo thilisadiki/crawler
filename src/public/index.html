@@ -54,8 +54,8 @@
         </div>
 
         <form id="crawlForm" class="form-layout">
-          <div class="form-row-main">
-            <div class="field-group flex-3">
+          <div class="core-crawl-row">
+            <div class="field-group core-target-field">
               <label for="seedUrl">Target URL Endpoint <span class="req">*</span></label>
               <div class="input-prefix-wrapper">
                 <span class="input-prefix">https://</span>
@@ -63,7 +63,7 @@
               </div>
             </div>
 
-            <div class="field-group flex-2">
+            <div class="field-group core-scope-field">
               <label for="crawlScope">Crawl Scope Boundary</label>
               <select id="crawlScope" class="select-input">
                 <option value="domain">Exact Hostname Only (www.domain.com)</option>
@@ -72,13 +72,32 @@
                 <option value="subdomains">Domain & All Subdomains (*.domain.com)</option>
               </select>
             </div>
-          </div>
 
-          <!-- Parameter Grid -->
-          <div class="form-row-grid core-settings-grid">
-            <div class="field-group">
+            <div class="field-group core-page-limit-field">
               <label for="maxPages">Page Limit</label>
               <input type="number" id="maxPages" class="text-input" min="1" max="10000" value="1" disabled>
+            </div>
+
+            <!-- Action Bar -->
+            <div class="action-bar core-action-bar">
+              <div class="action-buttons-group">
+                <button type="submit" id="startBtn" class="btn btn-primary">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  Execute Crawl
+                </button>
+                <button type="button" id="pauseBtn" class="btn btn-secondary" disabled>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                  Pause
+                </button>
+                <button type="button" id="stopBtn" class="btn btn-danger" disabled>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>
+                  Abort
+                </button>
+                <button type="button" id="resetBtn" class="btn btn-outline" title="Clear current results and reset dashboard to start a fresh crawl">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                  Clear / Reset
+                </button>
+              </div>
             </div>
           </div>
 
@@ -183,27 +202,6 @@
             </div>
           </div>
 
-          <!-- Action Bar -->
-          <div class="action-bar">
-            <div class="action-buttons-group">
-              <button type="submit" id="startBtn" class="btn btn-primary">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                Execute Crawl
-              </button>
-              <button type="button" id="pauseBtn" class="btn btn-secondary" disabled>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                Pause
-              </button>
-              <button type="button" id="stopBtn" class="btn btn-danger" disabled>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16"/></svg>
-                Abort
-              </button>
-              <button type="button" id="resetBtn" class="btn btn-outline" title="Clear current results and reset dashboard to start a fresh crawl">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                Clear / Reset
-              </button>
-            </div>
-          </div>
         </form>
       </section>
 
