@@ -1,0 +1,122 @@
+import { FormEvent, useMemo, useState } from 'react';
+import { crawlerClient } from './api/crawler-client';
+import { useCrawler } from './features/crawl/useCrawler';
+import type { CrawlConfig, CrawlPage, CrawlScope } from './types/crawl';
+import './styles.css';
+
+const DEFAULT_CONFIG: CrawlConfig = {
+  seedUrl: '', crawlScope: 'single-url', maxPages: 1, maxDepth: 0,
+  concurrency: 1, delayBetweenRequestsMs: 500, autoScroll: true
+};
+
+function numberValue(value: string, fallback: number) {
+  const number = Number.parseInt(value, 10);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function statusLabel(state: string, engine?: string) {
+  if (state === 'ready') return 'System ready';
+  if (state === 'paused') return 'Paused';
+  if (state === 'stopping') return 'Stopping…';
+  if (state === 'completed') return 'Audit complete';
+  return engine === 'http' ? 'Direct DOM engine active' : engine === 'browser' ? 'Browser engine active' : 'Starting engine';
+}
+
+function contentFound(page: CrawlPage) {
+  return Boolean(page.customContent?.detected);
+}
+
+function PageInspector({ page, onClose }: { page: CrawlPage; onClose: () => void }) {
+  const content = page.customContent;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="inspector" role="dialog" aria-modal="true" aria-label="Audited page details" onMouseDown={event => event.stopPropagation()}>
+      <header><div><p className="eyebrow">Page inspection</p><h2>{page.title || 'Untitled page'}</h2><a href={page.url} target="_blank" rel="noreferrer">{page.url}</a></div><button className="icon-button" onClick={onClose} aria-label="Close inspection">×</button></header>
+      <div className="detail-grid">
+        <div><span>Status</span><strong>{page.statusCode ?? '—'}</strong></div><div><span>Latency</span><strong>{page.responseTime ? `${page.responseTime}ms` : '—'}</strong></div>
+        <div><span>Words</span><strong>{page.wordCount ?? '—'}</strong></div><div><span>On-page links</span><strong>{page.links?.length ?? 0}</strong></div>
+      </div>
+      <section className="detail-section"><h3>SEO metadata</h3><dl><dt>Meta description</dt><dd>{page.metaDescription || 'Not present'}</dd><dt>H1</dt><dd>{page.h1 || page.h1List?.join(', ') || 'Not present'}</dd></dl></section>
+      <section className="detail-section"><h3>Content area</h3><p><span className={content?.detected ? 'tag positive' : 'tag neutral'}>{content?.detected ? 'Detected' : 'Not detected'}</span> {content?.selectorUsed || 'No selector matched'}</p><p className="preview">{content?.fullText || content?.textSnippet || page.fullPageText || 'No rendered text was returned.'}</p></section>
+    </section>
+  </div>;
+}
+
+export default function App() {
+  const crawler = useCrawler();
+  const [config, setConfig] = useState<CrawlConfig>(DEFAULT_CONFIG);
+  const [advanced, setAdvanced] = useState(false);
+  const [filter, setFilter] = useState<'all' | '200' | 'content' | 'missing' | 'errors'>('all');
+  const [search, setSearch] = useState('');
+  const [selectedPage, setSelectedPage] = useState<CrawlPage | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const running = crawler.state === 'running' || crawler.state === 'paused' || crawler.state === 'stopping';
+  const maxWorkers = crawler.capacity?.maxWorkersPerCrawl || 1;
+  const pages = useMemo(() => crawler.pages.filter(page => {
+    const query = search.trim().toLowerCase();
+    const searchable = `${page.url} ${page.title || ''} ${page.statusCode || ''}`.toLowerCase();
+    if (query && !searchable.includes(query)) return false;
+    if (filter === '200') return page.statusCode === 200;
+    if (filter === 'content') return contentFound(page);
+    if (filter === 'missing') return !contentFound(page);
+    if (filter === 'errors') return Boolean(page.error) || (page.statusCode || 0) >= 400;
+    return true;
+  }), [crawler.pages, filter, search]);
+  const contentPages = crawler.pages.filter(contentFound).length;
+  const errors = (crawler.stats.errorsCount || 0) + (crawler.stats.blockedByRobotsCount || 0);
+
+  function update<K extends keyof CrawlConfig>(key: K, value: CrawlConfig[K]) {
+    setConfig(current => ({ ...current, [key]: value }));
+  }
+  function setScope(scope: CrawlScope) {
+    const single = scope === 'single-url';
+    setConfig(current => ({ ...current, crawlScope: scope, maxPages: single ? 1 : Math.max(2, current.maxPages), maxDepth: single ? 0 : Math.max(1, current.maxDepth) }));
+  }
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    await crawler.run('start', config);
+  }
+
+  return <div className="app-shell">
+    <header className="topbar"><div><span className="brand-mark">⌘</span><span className="brand">CrawlLoom <small>Next dashboard preview</small></span></div><span className={`status ${crawler.state}`}><i />{statusLabel(crawler.state, crawler.engine?.mode)}</span></header>
+    <main>
+      <div className="migration-note">React migration in progress. This preview uses the same crawler API and tab session as the established dashboard; the current dashboard at <a href="/">/</a> remains the supported interface until feature parity.</div>
+      <section className="card config-card">
+        <div className="section-heading"><div><p className="eyebrow">Crawl target</p><h1>Start a browser-rendered audit</h1></div><button className="secondary" type="button" onClick={() => setAdvanced(open => !open)}>{advanced ? 'Hide advanced' : 'Advanced directives'}</button></div>
+        <form onSubmit={submit}>
+          <div className="core-fields">
+            <label className="wide">Target address<input required value={config.seedUrl} onChange={event => update('seedUrl', event.target.value)} placeholder="graduateshub.org or https://www.example.com/section/" disabled={running} /></label>
+            <label>Scope<select value={config.crawlScope} onChange={event => setScope(event.target.value as CrawlScope)} disabled={running}><option value="single-url">Single URL audit</option><option value="domain">Exact hostname</option><option value="subpath">Subfolder / path only</option><option value="subdomains">Domain & subdomains</option></select></label>
+            <label>Page limit<input type="number" min="1" max="10000" value={config.maxPages} disabled={running || config.crawlScope === 'single-url'} onChange={event => update('maxPages', numberValue(event.target.value, 1))} /></label>
+          </div>
+          {advanced && <div className="advanced-grid">
+            <label>Max crawl depth<input type="number" min="0" max="20" value={config.maxDepth} disabled={running || config.crawlScope === 'single-url'} onChange={event => update('maxDepth', numberValue(event.target.value, 0))} /></label>
+            <label>Worker threads<input type="number" min="1" max={maxWorkers} value={config.concurrency} disabled={running} onChange={event => update('concurrency', Math.min(maxWorkers, numberValue(event.target.value, 1)))} /></label>
+            <label>Rate limiter (ms)<input type="number" min="0" max="5000" step="50" value={config.delayBetweenRequestsMs} disabled={running} onChange={event => update('delayBetweenRequestsMs', numberValue(event.target.value, 500))} /></label>
+            <label className="check"><input type="checkbox" checked={config.autoScroll} disabled={running} onChange={event => update('autoScroll', event.target.checked)} /> Dynamic auto-scroll</label>
+          </div>}
+          <div className="actions"><button className="primary" disabled={running}>▶ Execute crawl</button><button className="secondary" type="button" disabled={crawler.state !== 'running'} onClick={() => void crawler.run('pause')}>Ⅱ Pause</button><button className="secondary" type="button" disabled={crawler.state !== 'paused'} onClick={() => void crawler.run('resume')}>▶ Resume</button><button className="danger" type="button" disabled={!running || crawler.state === 'stopping'} onClick={() => void crawler.run('stop')}>■ Abort</button><button className="secondary" type="button" onClick={() => void crawler.run('reset')}>↻ Clear / reset</button></div>
+        </form>
+        {crawler.error && <p className="error-message" role="alert">{crawler.error}</p>}
+      </section>
+      <section className="stat-grid" aria-label="Crawl summary">
+        <Stat label="Pages audited" value={crawler.stats.pagesCrawled} detail={`${Math.min(100, Math.round((crawler.stats.pagesCrawled / Math.max(1, config.maxPages)) * 100))}% of limit`} />
+        <Stat label="Pending queue" value={crawler.queueLength} detail={`${crawler.capacity?.availableSlots ?? '—'} crawl slot(s) free`} />
+        <Stat label="Discovered links" value={(crawler.stats.internalLinksCount || 0) + (crawler.stats.externalLinksCount || 0)} detail={`${crawler.stats.externalLinksCount || 0} external`} />
+        <Stat label="Content area coverage" value={`${crawler.pages.length ? Math.round((contentPages / crawler.pages.length) * 100) : 0}%`} detail={`${contentPages} pages verified`} />
+        <Stat label="Errors & exclusions" value={errors} detail={crawler.engine?.mode === 'http' ? 'Direct DOM engine' : 'Browser-rendered crawl'} />
+      </section>
+      <section className="card explorer">
+        <div className="explorer-head"><div><p className="eyebrow">Audited pages</p><h2>{crawler.pages.length.toLocaleString()} page{crawler.pages.length === 1 ? '' : 's'} collected</h2></div><div className="export-wrap"><button className="secondary" onClick={() => setExportOpen(open => !open)}>Export ▾</button>{exportOpen && <div className="export-menu">{[
+          ['Excel workbook (.xlsx)', '/api/export/workbook.xlsx'], ['Pages CSV', '/api/export/pages.csv'], ['All links CSV', '/api/export/links.csv'], ['Resources CSV', '/api/export/resources.csv'], ['SEO issues CSV', '/api/export/issues.csv'], ['Content area CSV', '/api/export/custom-content.csv']
+        ].map(([label, path]) => <a key={path} href={crawlerClient.exportUrl(path)}>{label}</a>)}</div>}</div></div>
+        <div className="toolbar"><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search URLs, titles or status codes…" />{(['all', '200', 'content', 'missing', 'errors'] as const).map(item => <button key={item} className={filter === item ? 'pill active' : 'pill'} onClick={() => setFilter(item)}>{item === 'all' ? `All (${crawler.pages.length})` : item === '200' ? '200 OK' : item === 'content' ? `Content found (${contentPages})` : item === 'missing' ? `Content missing (${crawler.pages.length - contentPages})` : `Errors (${errors})`}</button>)}</div>
+        <div className="table-wrap"><table><thead><tr><th>#</th><th>Status</th><th>URL</th><th>Title</th><th>Content area</th><th>Links</th><th>Latency</th><th /></tr></thead><tbody>{pages.length ? pages.map((page, index) => <tr key={page.url}><td>{index + 1}</td><td><span className={page.statusCode === 200 ? 'code success' : 'code failure'}>{page.statusCode ?? '—'}</span></td><td className="url"><a href={page.url} target="_blank" rel="noreferrer">{page.url}</a></td><td>{page.title || '—'}</td><td><span className={contentFound(page) ? 'tag positive' : 'tag neutral'}>{contentFound(page) ? `Found (${page.customContent?.wordCount || 0}w)` : 'None'}</span></td><td>{page.links?.length || 0}</td><td>{page.responseTime ? `${page.responseTime}ms` : '—'}</td><td><button className="inspect" onClick={() => setSelectedPage(page)}>Inspect</button></td></tr>) : <tr><td colSpan={8} className="empty">No audited pages match these filters.</td></tr>}</tbody></table></div>
+      </section>
+    </main>
+    {selectedPage && <PageInspector page={selectedPage} onClose={() => setSelectedPage(null)} />}
+  </div>;
+}
+
+function Stat({ label, value, detail }: { label: string; value: string | number; detail: string }) {
+  return <article className="stat"><span>{label}</span><strong>{typeof value === 'number' ? value.toLocaleString() : value}</strong><small>{detail}</small></article>;
+}
