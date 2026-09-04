@@ -24,6 +24,7 @@ MAX_CONCURRENT_CRAWLS=3
 MAX_WORKERS_PER_CRAWL=1
 LINK_CHECK_CONCURRENCY=6
 LINK_CHECK_DEADLINE_MS=30000
+PUBLIC_APP_URL=https://workva.co.za
 ```
 
 `MAX_CONCURRENT_CRAWLS` controls how many isolated users may crawl simultaneously (allowed range

@@ -29,9 +29,34 @@ const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
 const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const adminLoginAttempts = new Map();
+const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://workva.co.za').replace(/\/$/, '');
+
+function preventIndexing(req, res, next) {
+  // robots.txt is advisory; this response header is the crawler-enforced layer.
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+  next();
+}
 
 app.use(express.json());
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+app.use(['/admin', '/api', '/next'], preventIndexing);
 app.use(express.static(path.join(__dirname, 'src', 'public')));
+
+// Only public product and information pages are submitted to search engines.
+// Administration, API and preview routes are excluded above and in robots.txt.
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /api\nDisallow: /next\n\nSitemap: ${PUBLIC_APP_URL}/sitemap.xml\n`);
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  const pages = ['', '/about', '/privacy', '/terms', '/acceptable-use'];
+  const urls = pages.map(page => `  <url><loc>${PUBLIC_APP_URL}${page}/</loc></url>`).join('\n');
+  res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`);
+});
 
 function sendInformationPage(filename) {
   return (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'info', filename));

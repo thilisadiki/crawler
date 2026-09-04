@@ -237,6 +237,7 @@ All configuration is optional. The defaults are suitable for a small Hostinger C
 | `LINK_CHECK_CONCURRENCY` | `6` | 1–12 | Parallel link status checks per crawl. |
 | `LINK_CHECK_DEADLINE_MS` | `30000` | 5000–120000 | Per-page deadline for link status verification. |
 | `APP_RELEASE` | `concurrent-crawls-v4` | — | Optional runtime release label returned by the status API. |
+| `PUBLIC_APP_URL` | `https://workva.co.za` | Absolute public URL | Used in `robots.txt` and `sitemap.xml`. Change it if CrawlLoom uses another canonical domain. |
 | `DB_HOST` | — | — | MySQL host; enables durable crawl history when all `DB_*` values are present. |
 | `DB_PORT` | `3306` | — | MySQL port. |
 | `DB_NAME` | — | — | MySQL database name. |
@@ -244,6 +245,19 @@ All configuration is optional. The defaults are suitable for a small Hostinger C
 | `DB_PASSWORD` | — | — | MySQL database password. Keep this only in hosting environment variables. |
 | `ADMIN_PASSWORD` | — | — | Enables the protected `/admin` history-management screen. Use a long, unique password and set it only in hPanel. |
 | `ADMIN_SESSION_SECRET` | `ADMIN_PASSWORD` | — | Optional separate, long random value used to sign administrator sessions. Recommended in production. |
+
+### Public-site SEO
+
+The public home and information pages include unique page titles, descriptions,
+canonical URLs, Open Graph metadata, Twitter cards, and WebApplication
+structured data. `/robots.txt` references `/sitemap.xml`, which lists only the
+public home, About, Privacy, Terms, and Acceptable Use pages.
+
+Administrative pages, API endpoints, and the temporary React preview at
+`/next/` are excluded through `robots.txt`, an `X-Robots-Tag` response header,
+and page-level `noindex,nofollow` directives. The header matters because
+`robots.txt` alone does not guarantee an already-discovered URL stays out of
+search results.
 
 Recommended starting capacity:
 
