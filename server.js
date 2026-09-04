@@ -152,16 +152,17 @@ function createAdminSession(req) {
   pruneSessionRecords();
   const id = randomUUID();
   const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
-  adminSessions.set(id, {
+  const session = {
     id,
     createdAt: Date.now(),
     lastSeenAt: Date.now(),
     expiresAt,
     ip: getClientIp(req),
     userAgent: req.get('user-agent') || 'Unknown user agent'
-  });
+  };
+  adminSessions.set(id, session);
   const payload = Buffer.from(JSON.stringify({ id, exp: expiresAt })).toString('base64url');
-  return `${payload}.${signAdminPayload(payload)}`;
+  return { token: `${payload}.${signAdminPayload(payload)}`, session };
 }
 
 function getAdminSession(req, touch = true) {
@@ -182,6 +183,32 @@ function getAdminSession(req, touch = true) {
     return session;
   } catch {
     return false;
+  }
+}
+
+// Logging is deliberately best-effort: an unavailable database must never
+// block a login, crawl, or emergency session revocation. Metadata excludes
+// passwords, cookies, and all other credentials.
+function auditSecurityEvent(req, eventType, outcome = 'success', metadata = {}, context = {}) {
+  const adminSession = context.adminSession || getAdminSession(req, false);
+  const dashboardSession = context.dashboardSession || req.dashboardSession;
+  crawlStorage.recordSecurityEvent({
+    eventType,
+    outcome,
+    adminSessionId: adminSession?.id || null,
+    dashboardSessionId: dashboardSession?.id || null,
+    ipAddress: getClientIp(req),
+    userAgent: req.get('user-agent') || 'Unknown user agent',
+    metadata
+  }).catch(error => console.error(`Could not record security event (${eventType}):`, error.message));
+}
+
+function auditTarget(seedUrl) {
+  try {
+    const url = new URL(seedUrl);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return 'Invalid target';
   }
 }
 
@@ -291,21 +318,26 @@ app.post('/api/admin/login', requireSameOrigin, (req, res) => {
   if (attempt.count >= ADMIN_LOGIN_MAX_ATTEMPTS) {
     const retryAfterSeconds = Math.max(1, Math.ceil((attempt.resetAt - Date.now()) / 1000));
     res.setHeader('Retry-After', retryAfterSeconds);
+    auditSecurityEvent(req, 'admin.login', 'denied', { reason: 'rate-limited' });
     return res.status(429).json({ error: `Too many failed attempts. Try again in ${Math.ceil(retryAfterSeconds / 60)} minute(s).` });
   }
   if (!passwordsMatch(req.body?.password)) {
     attempt.count++;
+    auditSecurityEvent(req, 'admin.login', 'denied', { reason: 'incorrect-password' });
     return res.status(401).json({ error: 'Incorrect password.' });
   }
   adminLoginAttempts.delete(key);
   res.setHeader('Cache-Control', 'no-store');
-  res.cookie('omnicrawl_admin', createAdminSession(req), adminCookieOptions(req));
+  const created = createAdminSession(req);
+  auditSecurityEvent(req, 'admin.login', 'success', {}, { adminSession: created.session });
+  res.cookie('omnicrawl_admin', created.token, adminCookieOptions(req));
   return res.json({ success: true });
 });
 
 app.post('/api/admin/logout', requireAdmin, requireSameOrigin, (req, res) => {
   const session = getAdminSession(req, false);
   if (session) session.endedAt = Date.now();
+  auditSecurityEvent(req, 'admin.logout', 'success', {}, { adminSession: session });
   res.clearCookie('omnicrawl_admin', adminCookieOptions(req));
   res.json({ success: true });
 });
@@ -320,15 +352,27 @@ app.get('/api/admin/database-overview', requireAdmin, async (req, res) => {
   }
 });
 
+app.get('/api/admin/security-events', requireAdmin, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    res.json({ events: await crawlStorage.listSecurityEvents(100), storage: crawlStorage.getStatus() });
+  } catch (error) {
+    res.status(503).json({ error: 'Could not load security activity.', storage: crawlStorage.getStatus() });
+  }
+});
+
 app.post('/api/admin/crawl-history/clear', requireAdmin, requireSameOrigin, async (req, res) => {
   try {
     if (runningCrawlers.size > 0) {
+      auditSecurityEvent(req, 'crawl.history.clear', 'denied', { reason: 'active-crawls' });
       return res.status(409).json({ error: 'Stop and allow all active crawls to finish saving before clearing history.' });
     }
     if (req.body?.confirmation !== 'DELETE ALL') {
+      auditSecurityEvent(req, 'crawl.history.clear', 'denied', { reason: 'confirmation-mismatch' });
       return res.status(400).json({ error: 'Type DELETE ALL to confirm permanent deletion.' });
     }
     const deleted = await crawlStorage.clearAllCrawls();
+    auditSecurityEvent(req, 'crawl.history.clear', 'success', { deleted });
     return res.json({ success: true, deleted });
   } catch (error) {
     console.error('Failed to clear saved crawl history:', error.message);
@@ -355,9 +399,13 @@ app.post('/api/admin/sessions/:sessionId/revoke', requireAdmin, requireSameOrigi
   if (adminSession) {
     if (adminSession.id === currentAdminSession?.id) return res.status(400).json({ error: 'Use Sign out to end your current administrator session.' });
     adminSession.revokedAt = Date.now();
+    auditSecurityEvent(req, 'session.revoked', 'success', { sessionType: 'Administrator', sessionIdSuffix: sessionId.slice(-4) }, { adminSession: currentAdminSession });
     return res.json({ success: true, type: 'Administrator' });
   }
-  if (revokeDashboardSession(sessionId)) return res.json({ success: true, type: 'Dashboard' });
+  if (revokeDashboardSession(sessionId)) {
+    auditSecurityEvent(req, 'session.revoked', 'success', { sessionType: 'Dashboard', sessionIdSuffix: sessionId.slice(-4) }, { adminSession: currentAdminSession });
+    return res.json({ success: true, type: 'Dashboard' });
+  }
   return res.status(404).json({ error: 'That session is no longer available.' });
 });
 
@@ -491,6 +539,7 @@ app.post('/api/crawler/session', requireAdmin, requireSameOrigin, (req, res) => 
     }
   }
   const created = createDashboardSession(req, adminSession?.id);
+  auditSecurityEvent(req, 'dashboard.session.created', 'success', {}, { adminSession, dashboardSession: created });
   return res.status(201).json({ sessionId: created.id, resumed: false });
 });
 
@@ -695,6 +744,15 @@ app.post('/api/crawler/start', async (req, res) => {
     // Run in background
     const crawlPromise = crawler.start();
     broadcastCapacity();
+    auditSecurityEvent(req, 'crawl.started', 'success', {
+      crawlId,
+      target: auditTarget(seedUrl),
+      scope: crawlScope,
+      noPageLimit: crawlWithoutPageLimit,
+      requestedPageLimit: crawlWithoutPageLimit ? null : maxPages,
+      maxDepth,
+      workerThreads: concurrency
+    });
     crawlPromise
       .catch(err => {
         console.error('Crawler engine error:', err);
@@ -721,27 +779,30 @@ app.post('/api/crawler/start', async (req, res) => {
 
 // Controls
 app.post('/api/crawler/pause', (req, res) => {
-  const { crawler } = getSessionCrawler(req);
+  const { sessionId, crawler } = getSessionCrawler(req);
   if (crawler?.isRunning) {
     crawler.pause();
+    auditSecurityEvent(req, 'crawl.paused', 'success', { crawlId: crawlerSessions.get(sessionId)?.crawlId || null });
     return res.json({ success: true, message: 'Crawl paused' });
   }
   res.status(400).json({ error: 'No active running crawl to pause.' });
 });
 
 app.post('/api/crawler/resume', (req, res) => {
-  const { crawler } = getSessionCrawler(req);
+  const { sessionId, crawler } = getSessionCrawler(req);
   if (crawler?.isRunning) {
     crawler.resume();
+    auditSecurityEvent(req, 'crawl.resumed', 'success', { crawlId: crawlerSessions.get(sessionId)?.crawlId || null });
     return res.json({ success: true, message: 'Crawl resumed' });
   }
   res.status(400).json({ error: 'No active crawl to resume.' });
 });
 
 app.post('/api/crawler/stop', (req, res) => {
-  const { crawler } = getSessionCrawler(req);
+  const { sessionId, crawler } = getSessionCrawler(req);
   if (crawler?.isRunning) {
     crawler.stop();
+    auditSecurityEvent(req, 'crawl.stop-requested', 'success', { crawlId: crawlerSessions.get(sessionId)?.crawlId || null });
     return res.json({ success: true, message: 'Crawl cancellation requested' });
   }
   res.status(400).json({ error: 'No active crawl to stop.' });
@@ -751,6 +812,8 @@ app.post('/api/crawler/stop', (req, res) => {
 app.post('/api/crawler/reset', (req, res) => {
   try {
     const { sessionId, crawler } = getSessionCrawler(req);
+    const crawlId = crawlerSessions.get(sessionId)?.crawlId || null;
+    const wasRunning = Boolean(crawler?.isRunning);
     if (crawler) {
       if (crawler.isRunning) {
         crawler.stop();
@@ -758,6 +821,7 @@ app.post('/api/crawler/reset', (req, res) => {
       crawlerSessions.delete(sessionId);
     }
     broadcastSSE(sessionId, 'reset', {});
+    auditSecurityEvent(req, 'crawl.reset', 'success', { crawlId, wasRunning });
     return res.json({ success: true, message: 'Crawl state reset successfully' });
   } catch (err) {
     console.error('Failed to reset crawler:', err);

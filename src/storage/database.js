@@ -155,6 +155,22 @@ export class CrawlStorage {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS security_events (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        event_type VARCHAR(96) NOT NULL,
+        outcome VARCHAR(24) NOT NULL DEFAULT 'success',
+        admin_session_id CHAR(36) NULL,
+        dashboard_session_id CHAR(36) NULL,
+        ip_address VARCHAR(64) NULL,
+        user_agent VARCHAR(512) NULL,
+        metadata_json JSON NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_security_events_created_at (created_at),
+        INDEX idx_security_events_type_created_at (event_type, created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     // Existing Hostinger databases were created before asset persistence was
     // introduced. Add the column once without disturbing stored crawls.
     try {
@@ -376,6 +392,41 @@ export class CrawlStorage {
     }
   }
 
+  async recordSecurityEvent({ eventType, outcome = 'success', adminSessionId = null, dashboardSessionId = null, ipAddress = null, userAgent = null, metadata = null }) {
+    if (!(await this.initialize()) || !this.pool) return false;
+    await this.pool.execute(
+      `INSERT INTO security_events (
+        event_type, outcome, admin_session_id, dashboard_session_id, ip_address, user_agent, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(eventType || 'unknown').slice(0, 96), String(outcome || 'success').slice(0, 24),
+        nullable(adminSessionId && String(adminSessionId).slice(0, 36)),
+        nullable(dashboardSessionId && String(dashboardSessionId).slice(0, 36)),
+        nullable(ipAddress && String(ipAddress).slice(0, 64)),
+        nullable(userAgent && String(userAgent).slice(0, 512)),
+        metadata && typeof metadata === 'object' ? JSON.stringify(metadata) : null
+      ]
+    );
+    return true;
+  }
+
+  async listSecurityEvents(limit = 100) {
+    if (!(await this.initialize()) || !this.pool) return [];
+    const [rows] = await this.pool.execute(
+      `SELECT id, event_type, outcome, admin_session_id, dashboard_session_id, ip_address, user_agent, metadata_json, created_at
+       FROM security_events
+       ORDER BY id DESC
+       LIMIT ?`,
+      [Math.min(Math.max(Number.parseInt(limit, 10) || 100, 1), 250)]
+    );
+    return rows.map(row => ({
+      id: Number(row.id), eventType: row.event_type, outcome: row.outcome,
+      adminSessionId: row.admin_session_id, dashboardSessionId: row.dashboard_session_id,
+      ipAddress: row.ip_address || 'Unknown', userAgent: row.user_agent || 'Unknown user agent',
+      metadata: parseJson(row.metadata_json, {}), createdAt: row.created_at
+    }));
+  }
+
   async getDatabaseOverview() {
     if (!(await this.initialize()) || !this.pool) {
       throw new Error('Persistent crawl history is not connected.');
@@ -386,6 +437,7 @@ export class CrawlStorage {
         (SELECT COUNT(*) FROM crawl_runs) AS crawls,
         (SELECT COUNT(*) FROM crawl_pages) AS pages,
         (SELECT COUNT(*) FROM crawl_links) AS links,
+        (SELECT COUNT(*) FROM security_events) AS securityEvents,
         (SELECT COALESCE(SUM(JSON_LENGTH(resources_json)), 0) FROM crawl_pages) AS resources,
         (SELECT COALESCE(SUM(CHAR_LENGTH(full_page_text)), 0) FROM crawl_pages) AS fullPageTextChars,
         (SELECT COALESCE(SUM(CHAR_LENGTH(custom_text)), 0) FROM crawl_pages) AS contentAreaTextChars,
@@ -401,7 +453,7 @@ export class CrawlStorage {
         COALESCE(data_length, 0) + COALESCE(index_length, 0) AS totalBytes
       FROM information_schema.tables
       WHERE table_schema = DATABASE()
-        AND table_name IN ('crawl_runs', 'crawl_pages', 'crawl_links')
+        AND table_name IN ('crawl_runs', 'crawl_pages', 'crawl_links', 'security_events')
       ORDER BY table_name
     `);
     const [[latestCrawl]] = await this.pool.query(`
@@ -420,7 +472,7 @@ export class CrawlStorage {
     return {
       database: process.env.DB_NAME || '',
       counts: {
-        crawls: Number(counts.crawls || 0), pages: Number(counts.pages || 0), links: Number(counts.links || 0),
+        crawls: Number(counts.crawls || 0), pages: Number(counts.pages || 0), links: Number(counts.links || 0), securityEvents: Number(counts.securityEvents || 0),
         resources: Number(counts.resources || 0), fullPageTextChars: Number(counts.fullPageTextChars || 0),
         contentAreaTextChars: Number(counts.contentAreaTextChars || 0)
       },

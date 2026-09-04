@@ -7,7 +7,7 @@
   <title>CrawlLoom Administration</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #10172a; color: #e8eefb; }
-    .revoke { padding: 7px 10px; background: #a92f46; font-size: .78rem; } .session-status { display: inline-block; padding: 3px 6px; border-radius: 5px; font-size: .75rem; font-weight: 700; } .session-status.active { color: #a7f3d0; background: #064e3b; } .session-status.recent { color: #bfdbfe; background: #1e3a8a; } .session-status.revoked, .session-status.signed-out { color: #fecaca; background: #7f1d1d; } .device { display: block; color: #e7eefc; } .device-meta { display: block; margin-top: 4px; color: #9fb0cf; font-size: .76rem; } #sessionsMessage { min-height: 24px; color: #b9c8df; }
+    .revoke { padding: 7px 10px; background: #a92f46; font-size: .78rem; } .session-status, .event-outcome { display: inline-block; padding: 3px 6px; border-radius: 5px; font-size: .75rem; font-weight: 700; } .session-status.active, .event-outcome.success { color: #a7f3d0; background: #064e3b; } .session-status.recent { color: #bfdbfe; background: #1e3a8a; } .session-status.revoked, .session-status.signed-out, .event-outcome.denied { color: #fecaca; background: #7f1d1d; } .device { display: block; color: #e7eefc; } .device-meta { display: block; margin-top: 4px; color: #9fb0cf; font-size: .76rem; } #sessionsMessage, #eventsMessage { min-height: 24px; color: #b9c8df; } .event-name { font-weight: 700; color: #e7eefc; text-transform: capitalize; } .event-details { display: block; margin-top: 4px; color: #9fb0cf; font-size: .76rem; overflow-wrap: anywhere; }
     * { box-sizing: border-box; } body { margin: 0; min-height: 100vh; background: #10172a; } header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px max(24px, calc((100vw - 980px) / 2)); border-bottom: 1px solid #2e406a; background: #151f38; }
     h1 { margin: 0; font-size: 1.35rem; } main { width: min(100% - 48px, 1080px); margin: 46px auto; display: grid; gap: 24px; } .panel { padding: 30px; border: 1px solid #5d3442; border-radius: 14px; background: #211827; } .overview { border-color: #334d78; background: #151f38; } h2 { margin-top: 0; color: #ffc2c9; } .overview h2 { color: #c9dcff; } p, li { color: #c8c4cf; line-height: 1.55; } .warning { color: #ffd8a6; } code { padding: 2px 5px; border-radius: 4px; background: #0d1324; color: #fff; } label { display: block; margin: 22px 0 8px; font-weight: 600; } input { width: min(100%, 400px); padding: 12px; border: 1px solid #775264; border-radius: 7px; background: #11192b; color: white; font: inherit; } button { border: 0; border-radius: 7px; padding: 12px 16px; color: white; font: 700 .94rem inherit; cursor: pointer; } .danger { margin-top: 16px; background: #cf384d; } .danger:hover { background: #b6273b; } .secondary { background: #33466f; } button:disabled { cursor: not-allowed; opacity: .55; } #message { min-height: 24px; margin-top: 18px; color: #ffe2a8; } .hidden { display: none; } .section-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 18px; } .section-head h2 { margin: 0; } .metrics { display: grid; grid-template-columns: repeat(4, minmax(130px, 1fr)); gap: 12px; } .metric { padding: 15px; border: 1px solid #344974; border-radius: 10px; background: #101a31; } .metric strong { display: block; color: #fff; font-size: 1.35rem; } .metric span { display: block; margin-top: 5px; color: #aebcd8; font-size: .8rem; } .database-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 18px 0; color: #b8c8e4; font-size: .9rem; } .database-meta b { color: #fff; } .table-wrap { overflow-x: auto; border: 1px solid #31466f; border-radius: 9px; } table { border-collapse: collapse; width: 100%; min-width: 680px; font-size: .88rem; } th, td { padding: 11px 13px; text-align: left; border-bottom: 1px solid #293b5f; } th { color: #bcd1f8; background: #101a31; } tr:last-child td { border-bottom: 0; } .muted { color: #9fb0cf; } #overviewMessage { min-height: 24px; color: #b9c8df; } @media (max-width: 700px) { main { width: min(100% - 28px, 1080px); margin: 22px auto; } .panel { padding: 20px; } .metrics { grid-template-columns: repeat(2, 1fr); } .database-meta { grid-template-columns: 1fr; } }
   </style>
@@ -30,6 +30,7 @@
           <div class="metric"><strong id="crawlCount">0</strong><span>Saved crawls</span></div>
           <div class="metric"><strong id="pageCount">0</strong><span>Saved pages</span></div>
           <div class="metric"><strong id="linkCount">0</strong><span>Saved links</span></div>
+          <div class="metric"><strong id="securityEventCount">0</strong><span>Security events retained</span></div>
           <div class="metric"><strong id="resourceCount">0</strong><span>Saved resources</span></div>
           <div class="metric"><strong id="contentTextSize">—</strong><span>Stored page/content text</span></div>
           <div class="metric"><strong id="oldestCrawl">—</strong><span>Oldest saved crawl</span></div>
@@ -62,6 +63,20 @@
         </table>
       </div>
     </section>
+    <section class="panel overview">
+      <div class="section-head">
+        <h2>Security activity</h2>
+        <button id="refreshEvents" class="secondary" type="button">Refresh</button>
+      </div>
+      <p id="eventsMessage" role="status">Loading recent security activity…</p>
+      <p class="muted">The most recent 100 security events are retained in MySQL. Passwords, cookies, and other credentials are never recorded.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Time</th><th>Event</th><th>Outcome</th><th>IP</th><th>Device</th><th>Details</th></tr></thead>
+          <tbody id="eventsTable"><tr><td colspan="6" class="muted">Loading security activity…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
     <section class="panel">
       <h2>Clear saved crawl history</h2>
       <p>This permanently removes every saved crawl, page, content extraction, and discovered link from the MySQL database. Your live crawler settings are not affected.</p>
@@ -83,6 +98,9 @@
     const refreshSessions = document.getElementById('refreshSessions');
     const sessionsMessage = document.getElementById('sessionsMessage');
     const sessionsTable = document.getElementById('sessionsTable');
+    const refreshEvents = document.getElementById('refreshEvents');
+    const eventsMessage = document.getElementById('eventsMessage');
+    const eventsTable = document.getElementById('eventsTable');
     const formatNumber = value => Number(value || 0).toLocaleString();
     const formatBytes = value => {
       const bytes = Number(value || 0);
@@ -93,6 +111,12 @@
     };
     const formatDate = value => value ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—';
     const escapeHtml = value => String(value || '—').replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+    const describeDevice = userAgent => {
+      const value = String(userAgent || '');
+      const browser = /Edg\//.test(value) ? 'Microsoft Edge' : /Firefox\//.test(value) ? 'Firefox' : /Chrome\//.test(value) ? 'Chrome' : /Safari\//.test(value) ? 'Safari' : 'Unknown browser';
+      const device = /iPhone/.test(value) ? 'iPhone' : /iPad/.test(value) ? 'iPad' : /Android/.test(value) ? 'Android device' : /Windows/.test(value) ? 'Windows device' : /Macintosh/.test(value) ? 'Mac' : /Linux/.test(value) ? 'Linux device' : 'Unknown device';
+      return `${browser} on ${device}`;
+    };
 
     async function loadOverview() {
       refreshOverview.disabled = true;
@@ -107,6 +131,7 @@
         document.getElementById('crawlCount').textContent = formatNumber(counts.crawls);
         document.getElementById('pageCount').textContent = formatNumber(counts.pages);
         document.getElementById('linkCount').textContent = formatNumber(counts.links);
+        document.getElementById('securityEventCount').textContent = formatNumber(counts.securityEvents);
         document.getElementById('resourceCount').textContent = formatNumber(counts.resources);
         document.getElementById('contentTextSize').textContent = formatBytes(counts.fullPageTextChars + counts.contentAreaTextChars);
         document.getElementById('oldestCrawl').textContent = formatDate(dates.oldestCrawlAt);
@@ -139,6 +164,28 @@
         refreshSessions.disabled = false;
       }
     }
+    const formatEventName = eventType => String(eventType || 'Unknown event').replace(/[._-]+/g, ' ');
+    const formatEventDetails = metadata => {
+      if (!metadata || typeof metadata !== 'object' || !Object.keys(metadata).length) return '—';
+      return Object.entries(metadata)
+        .map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1').replace(/^./, char => char.toUpperCase())}: ${typeof value === 'object' ? JSON.stringify(value) : String(value)}`)
+        .join(' • ');
+    };
+    async function loadSecurityEvents() {
+      refreshEvents.disabled = true;
+      eventsMessage.textContent = 'Loading recent security activity…';
+      try {
+        const response = await fetch('/api/admin/security-events', { cache: 'no-store' });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not load security activity.');
+        eventsTable.innerHTML = data.events.map(event => `<tr><td>${escapeHtml(formatDate(event.createdAt))}</td><td><span class="event-name">${escapeHtml(formatEventName(event.eventType))}</span></td><td><span class="event-outcome ${escapeHtml(String(event.outcome || 'unknown').toLowerCase())}">${escapeHtml(event.outcome || 'Unknown')}</span></td><td>${escapeHtml(event.ipAddress)}</td><td>${escapeHtml(describeDevice(event.userAgent))}</td><td><span class="event-details">${escapeHtml(formatEventDetails(event.metadata))}</span></td></tr>`).join('') || '<tr><td colspan="6" class="muted">No security events have been recorded yet.</td></tr>';
+        eventsMessage.textContent = `${data.events.length} recent event${data.events.length === 1 ? '' : 's'} loaded.`;
+      } catch (error) {
+        eventsMessage.textContent = error.message;
+      } finally {
+        refreshEvents.disabled = false;
+      }
+    }
     confirmation.addEventListener('input', () => { clear.disabled = confirmation.value !== 'DELETE ALL'; });
     clear.addEventListener('click', async () => {
       clear.disabled = true;
@@ -161,6 +208,7 @@
     });
     refreshOverview.addEventListener('click', loadOverview);
     refreshSessions.addEventListener('click', loadSessions);
+    refreshEvents.addEventListener('click', loadSecurityEvents);
     sessionsTable.addEventListener('click', async event => {
       const button = event.target.closest('[data-session-id]');
       if (!button || !window.confirm('Revoke this session? Any crawl owned by that dashboard tab will be stopped.')) return;
@@ -177,6 +225,7 @@
     });
     loadOverview();
     loadSessions();
+    loadSecurityEvents();
     document.getElementById('logout').addEventListener('click', async () => {
       await fetch('/api/admin/logout', { method: 'POST' });
       window.location.assign('/admin/login');
