@@ -252,7 +252,7 @@ export class SiteCrawler extends EventEmitter {
     this.queued.add(effective);
   }
 
-  async fetchSourceSnapshot(url) {
+  async fetchSourceSnapshot(url, signal = this.getAbortSignal(this.pageTimeoutMs)) {
     const geo = this.geo || {};
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
@@ -262,9 +262,66 @@ export class SiteCrawler extends EventEmitter {
     const response = await fetch(url, {
       headers,
       redirect: 'follow',
-      signal: this.getAbortSignal(this.pageTimeoutMs)
+      signal
     });
     return { html: await response.text(), url: response.url || url };
+  }
+
+  static htmlPreview(html, maximumBytes = 2 * 1024 * 1024) {
+    const totalBytes = Buffer.byteLength(html || '', 'utf8');
+    if (totalBytes <= maximumBytes) return { html: html || '', totalBytes, truncated: false };
+    return {
+      html: Buffer.from(html, 'utf8').subarray(0, maximumBytes).toString('utf8'),
+      totalBytes,
+      truncated: true
+    };
+  }
+
+  // HTML documents are intentionally captured only when a user asks to inspect
+  // them. Keeping a copy for every crawled page would quickly overwhelm the
+  // database and browser memory on large audits.
+  async captureHtmlComparison(url) {
+    const sourcePromise = this.fetchSourceSnapshot(url, AbortSignal.timeout(this.pageTimeoutMs)).catch(() => null);
+    const inspectionBrowser = new BrowserManager({
+      headless: true,
+      proxy: this.proxy,
+      geo: this.geo,
+      blockCrossDomainRedirects: this.blockCrossDomainRedirects,
+      targetHostname: this.baseHostname
+    });
+    let pageContext = null;
+    let renderedHtml = '';
+    let renderedUrl = url;
+    let renderError = null;
+
+    try {
+      await inspectionBrowser.init();
+      pageContext = await inspectionBrowser.createPageContext();
+      const { page } = pageContext;
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: this.pageTimeoutMs });
+      await page.waitForFunction(() => {
+        const bodyText = document.body?.innerText?.trim() || '';
+        return document.querySelectorAll('a[href]').length > 0 || bodyText.length > 200;
+      }, null, { timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(500);
+      if (this.autoScroll) await inspectionBrowser.autoScroll(page, 2000);
+      renderedUrl = page.url() || url;
+      renderedHtml = await page.content();
+    } catch (error) {
+      renderError = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (pageContext?.context) await pageContext.context.close().catch(() => {});
+      await inspectionBrowser.close().catch(() => {});
+    }
+
+    const sourceSnapshot = await sourcePromise;
+    const sourceHtml = sourceSnapshot?.html || '';
+    return {
+      capturedAt: new Date().toISOString(),
+      source: { ...SiteCrawler.htmlPreview(sourceHtml), url: sourceSnapshot?.url || url },
+      rendered: { ...SiteCrawler.htmlPreview(renderedHtml), url: renderedUrl, error: renderError },
+      comparison: SiteCrawler.compareSourceAndRenderedHtml(sourceHtml, renderedHtml)
+    };
   }
 
   mergeDiscoveredLinks(renderedLinks = [], sourceLinks = []) {

@@ -7,7 +7,7 @@ import { IssuesExplorer } from './features/issues/IssuesExplorer';
 import { getSeoIssues } from './features/issues/issueRules';
 import { ContentExplorer } from './features/content/ContentExplorer';
 import { HistoryExplorer } from './features/history/HistoryExplorer';
-import type { CrawlConfig, CrawlPage, CrawlScope } from './types/crawl';
+import type { CrawlConfig, CrawlPage, CrawlScope, HtmlComparisonCapture } from './types/crawl';
 import './styles.css';
 
 const DEFAULT_CONFIG: CrawlConfig = {
@@ -42,17 +42,35 @@ function formatBytes(value?: number) {
 function PageInspector({ page, onClose }: { page: CrawlPage; onClose: () => void }) {
   const content = page.customContent;
   const comparison = page.renderComparison;
-  const [tab, setTab] = useState<'overview' | 'content' | 'links'>('overview');
+  const [tab, setTab] = useState<'overview' | 'content' | 'links' | 'code'>('overview');
+  const [htmlCapture, setHtmlCapture] = useState<HtmlComparisonCapture | null>(null);
+  const [htmlLoading, setHtmlLoading] = useState(false);
+  const [htmlError, setHtmlError] = useState<string | null>(null);
   const h1s = page.h1List?.filter(Boolean).join(' • ') || page.h1 || '[No H1 tag found]';
   const h2s = page.h2List?.filter(Boolean).join(' • ') || '[No H2 sub-headings found]';
   const contentText = content?.fullText || content?.textSnippet || page.fullPageText || 'No rendered text was returned.';
   const links = page.links || [];
   const contentLabel = content?.detected ? 'Content area • Active' : 'Content area';
+  async function loadHtmlComparison() {
+    setHtmlLoading(true);
+    setHtmlError(null);
+    try {
+      setHtmlCapture(await crawlerClient.pageHtml(page.url));
+    } catch (error) {
+      setHtmlError(error instanceof Error ? error.message : 'Could not capture the page HTML.');
+    } finally {
+      setHtmlLoading(false);
+    }
+  }
+  function openCodeComparison() {
+    setTab('code');
+    if (!htmlCapture && !htmlLoading) void loadHtmlComparison();
+  }
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="inspector page-inspector" role="dialog" aria-modal="true" aria-label="Audited page details" onMouseDown={event => event.stopPropagation()}>
       <header className="page-inspector-header"><div><span className={page.statusCode === 200 ? 'code success' : 'code failure'}>{page.statusCode ?? '—'}</span><a className="page-inspector-url" href={page.url} target="_blank" rel="noreferrer">{page.url}</a></div><button className="icon-button" onClick={onClose} aria-label="Close inspection">×</button></header>
-      <nav className="page-inspector-tabs" aria-label="Page inspection sections"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Overview &amp; SEO directives</button><button className={tab === 'content' ? 'active' : ''} onClick={() => setTab('content')}>{contentLabel}</button><button className={tab === 'links' ? 'active' : ''} onClick={() => setTab('links')}>Discovered links ({links.length})</button></nav>
+      <nav className="page-inspector-tabs" aria-label="Page inspection sections"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>Overview &amp; SEO directives</button><button className={tab === 'content' ? 'active' : ''} onClick={() => setTab('content')}>{contentLabel}</button><button className={tab === 'links' ? 'active' : ''} onClick={() => setTab('links')}>Discovered links ({links.length})</button><button className={tab === 'code' ? 'active' : ''} onClick={openCodeComparison}>HTML vs rendered DOM</button></nav>
       <div className="page-inspector-body">
         {tab === 'overview' && <div className="overview-grid">
           <article className="overview-card"><span>Page title (&lt;title&gt;)</span><strong>{page.title || '[No title tag found]'}</strong></article>
@@ -63,10 +81,11 @@ function PageInspector({ page, onClose }: { page: CrawlPage; onClose: () => void
           <article className="overview-card"><span>H2 sub-headings</span><strong>{h2s}</strong></article>
           <article className="overview-card compact"><span>Word &amp; asset count</span><strong>{(page.totalWords ?? page.wordCount ?? 0).toLocaleString()} words • {page.imagesCount ?? 0} images</strong></article>
           <article className="overview-card compact"><span>Response time</span><strong className="accent">{(page.responseTimeMs ?? page.responseTime) ? `${page.responseTimeMs ?? page.responseTime} ms` : '—'}</strong></article>
-          <article className="overview-card comparison-card"><span>Source HTML vs rendered DOM</span>{comparison?.available ? <><strong className={comparison.domChanged ? 'comparison-changed' : ''}>{comparison.domChanged ? 'DOM changed after rendering' : 'No meaningful DOM change detected'}</strong><small>{formatBytes(comparison.sourceHtmlBytes)} → {formatBytes(comparison.renderedHtmlBytes)} • {comparison.sourceWordCount?.toLocaleString() || 0} → {comparison.renderedWordCount?.toLocaleString() || 0} words • {comparison.renderedOnlyWordCount?.toLocaleString() || 0} rendered-only words</small></> : <strong>{comparison?.reason || 'This page has not been compared yet.'}</strong>}</article>
+          <article className="overview-card comparison-card"><span>Source HTML vs rendered DOM</span>{comparison?.available ? <><strong className={comparison.domChanged ? 'comparison-changed' : ''}>{comparison.domChanged ? 'DOM changed after rendering' : 'No meaningful DOM change detected'}</strong><small>{formatBytes(comparison.sourceHtmlBytes)} → {formatBytes(comparison.renderedHtmlBytes)} • {comparison.sourceWordCount?.toLocaleString() || 0} → {comparison.renderedWordCount?.toLocaleString() || 0} words • {comparison.renderedOnlyWordCount?.toLocaleString() || 0} rendered-only words</small></> : <strong>{comparison?.reason || 'This page has not been compared yet.'}</strong>}<button className="secondary comparison-open" onClick={openCodeComparison}>View actual HTML</button></article>
         </div>}
         {tab === 'content' && <section className="content-inspection"><div className="content-inspection-summary"><span className={content?.detected ? 'tag positive' : 'tag neutral'}>{content?.detected ? 'Content area detected' : 'Content area not detected'}</span><span>{content?.selectorUsed || 'No selector matched'}</span><span>{content?.wordCount?.toLocaleString() || page.totalWords?.toLocaleString() || 0} words</span></div><div className="content-inspection-grid"><article><span>Extracted sub-headings</span><p>{[...new Set([...(content?.headings || []), ...(page.h2List || [])])].join(' • ') || '[No sub-headings found]'}</p></article><article><span>Extracted rendered content</span><pre>{contentText}</pre></article></div></section>}
         {tab === 'links' && <section className="inspection-links"><div className="table-wrap"><table><thead><tr><th>Status</th><th>Anchor text</th><th>Destination URL</th><th>Type</th><th>In content area</th></tr></thead><tbody>{links.length ? links.map((link, index) => <tr key={`${link.url || link.targetUrl}-${index}`}><td><span className={link.statusCode === 200 ? 'code success' : (link.statusCode || 0) >= 400 ? 'code failure' : 'code neutral'}>{link.statusCode ?? '—'}</span></td><td>{link.anchorText || '[No text]'}</td><td className="url">{link.url || link.targetUrl || link.rawHref || '—'}</td><td>{link.linkType || 'Unknown'}</td><td>{link.isInsideCustom ? 'Yes' : 'No'}</td></tr>) : <tr><td colSpan={5} className="empty">No links were discovered on this page.</td></tr>}</tbody></table></div></section>}
+        {tab === 'code' && <section className="html-comparison"><p>The source and rendered DOM are captured when you open this tab. They are not stored in the crawl database.</p>{htmlLoading && <p className="comparison-loading">Capturing source HTML and browser-rendered DOM…</p>}{htmlError && <div className="comparison-error"><p>{htmlError}</p><button className="secondary" onClick={() => void loadHtmlComparison()}>Try again</button></div>}{htmlCapture && <><div className="html-comparison-summary"><span className={htmlCapture.comparison.available && htmlCapture.comparison.domChanged ? 'tag positive' : 'tag neutral'}>{htmlCapture.comparison.available ? (htmlCapture.comparison.domChanged ? 'DOM changed after rendering' : 'No meaningful DOM change detected') : 'Comparison unavailable'}</span><small>Captured {new Date(htmlCapture.capturedAt).toLocaleString()}</small></div><div className="html-code-grid"><article><header><div><strong>Original source HTML</strong><small>{htmlCapture.source.url}</small></div><span>{formatBytes(htmlCapture.source.totalBytes)}{htmlCapture.source.truncated ? ' • preview truncated at 2 MB' : ''}</span></header><pre>{htmlCapture.source.html || '[Source HTML could not be retrieved.]'}</pre></article><article><header><div><strong>Rendered DOM</strong><small>{htmlCapture.rendered.url}</small></div><span>{formatBytes(htmlCapture.rendered.totalBytes)}{htmlCapture.rendered.truncated ? ' • preview truncated at 2 MB' : ''}</span></header>{htmlCapture.rendered.error ? <p className="comparison-error">{htmlCapture.rendered.error}</p> : <pre>{htmlCapture.rendered.html || '[Rendered DOM could not be retrieved.]'}</pre>}</article></div></>}</section>}
       </div>
     </section>
   </div>;
@@ -86,6 +105,10 @@ export default function App() {
   const running = crawler.state === 'running' || crawler.state === 'paused' || crawler.state === 'stopping';
   const maxWorkers = crawler.capacity?.maxWorkersPerCrawl || 1;
   const unlimitedSafetyCap = crawler.capacity?.maxUnlimitedCrawlPages || 50000;
+  const availableCrawlSlots = crawler.capacity?.availableSlots;
+  const crawlSlotLabel = availableCrawlSlots === undefined
+    ? 'Checking crawl capacity…'
+    : `${availableCrawlSlots} crawl slot${availableCrawlSlots === 1 ? '' : 's'} free`;
   const pages = useMemo(() => crawler.pages.filter(page => {
     const query = search.trim().toLowerCase();
     const searchable = `${page.url} ${page.title || ''} ${page.statusCode || ''}`.toLowerCase();
@@ -132,7 +155,7 @@ export default function App() {
   }
 
   return <div className="app-shell">
-    <header className="topbar"><div><span className="brand-mark">⌘</span><span className="brand">CrawlLoom <small>Browser-rendered SEO crawler</small></span></div><span className={`status ${crawler.state}`}><i />{statusLabel(crawler.state, crawler.engine?.mode)}</span></header>
+    <header className="topbar"><div><span className="brand-mark">⌘</span><span className="brand">CrawlLoom <small>Browser-rendered SEO crawler</small></span></div><div className="topbar-status"><span className="crawl-capacity">{crawlSlotLabel}</span><span className={`status ${crawler.state}`}><i />{statusLabel(crawler.state, crawler.engine?.mode)}</span></div></header>
     <main>
       <section className="card config-card">
         <div className="section-heading"><div><p className="eyebrow">Crawl target</p><h1>Start a browser-rendered audit</h1></div><button className="secondary" type="button" onClick={() => setAdvanced(open => !open)}>{advanced ? 'Hide advanced' : 'Advanced directives'}</button></div>
@@ -162,7 +185,7 @@ export default function App() {
       </section>
       <section className="stat-grid" aria-label="Crawl summary">
         <Stat label="Pages audited" value={crawler.stats.pagesCrawled} detail={config.noPageLimit ? `Until queue empty • ${unlimitedSafetyCap.toLocaleString()} safety cap` : `${Math.min(100, Math.round((crawler.stats.pagesCrawled / Math.max(1, config.maxPages)) * 100))}% of limit`} />
-        <Stat label="Pending queue" value={crawler.queueLength} detail={`${crawler.capacity?.availableSlots ?? '—'} crawl slot(s) free`} />
+        <Stat label="Pending queue" value={crawler.queueLength} detail={crawler.queueLength ? 'URLs waiting to be audited' : 'No URLs waiting'} />
         <Stat label="Discovered links" value={(crawler.stats.internalLinksCount || 0) + (crawler.stats.externalLinksCount || 0)} detail={`${crawler.stats.externalLinksCount || 0} external`} />
         <Stat label="Content area coverage" value={`${crawler.pages.length ? Math.round((contentPages / crawler.pages.length) * 100) : 0}%`} detail={`${contentPages} pages verified`} />
         <Stat label="Errors & exclusions" value={errors} detail={crawler.engine?.mode === 'http' ? 'Direct DOM engine' : 'Browser-rendered crawl'} />

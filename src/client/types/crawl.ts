@@ -100,6 +100,13 @@ export interface RenderComparison {
   domChanged?: boolean;
 }
 
+export interface HtmlComparisonCapture {
+  capturedAt: string;
+  source: { html: string; totalBytes: number; truncated: boolean; url: string };
+  rendered: { html: string; totalBytes: number; truncated: boolean; url: string; error?: string | null };
+  comparison: RenderComparison;
+}
+
 export interface CrawlPage {
   url: string;
   statusCode?: number | null;
