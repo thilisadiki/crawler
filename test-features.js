@@ -42,6 +42,7 @@ async function runTests() {
       customLinksCount: 2,
       internalLinksCount: 5,
       externalLinksCount: 1,
+      renderComparison: { available: true, domChanged: true, sourceHtmlBytes: 120, renderedHtmlBytes: 280, sourceWordCount: 2, renderedWordCount: 8, renderedOnlyWordCount: 4 },
       resources: [{
         url: 'https://example.com/assets/site.css', resourceType: 'Stylesheet', element: 'link', attribute: 'href',
         statusCode: 200, sizeBytes: 2048, discoveryStatus: 'Loaded'
@@ -53,6 +54,7 @@ async function runTests() {
   const pagesCsv = Exporter.generatePagesCSV(sampleResults);
   assert(pagesCsv.includes('https://example.com/test'), 'CSV should contain URL');
   assert(pagesCsv.includes('Content Area Detected'), 'CSV should contain the content detection header');
+  assert(pagesCsv.includes('DOM Changed After Rendering'), 'CSV should include source-versus-rendered comparison fields');
   const issuesCsv = Exporter.generateIssuesCSV(sampleResults);
   assert(issuesCsv.includes('Severity,Issue,Issue Code'), 'Issues CSV should contain issue headers');
   assert(issuesCsv.includes('Title is too short'), 'Issues CSV should contain detected issues');
@@ -77,6 +79,7 @@ async function runTests() {
   });
   await singleCrawler.start();
   assert.strictEqual(singleCrawler.results.length, 1, 'Single URL scope must only crawl 1 page');
+  assert.strictEqual(singleCrawler.results[0].renderComparison?.available, true, 'Browser crawls should retain source-versus-rendered DOM metrics');
   console.log('✅ Single URL Scope test passed');
 
   console.log('--- 4. Testing Exclusion Regex Filter ---');
@@ -163,7 +166,18 @@ async function runTests() {
   }
   console.log('✅ Redirect chain tests passed');
 
-  console.log('--- 7. Testing Browser Disconnect Detection ---');
+  console.log('--- 7. Testing Source vs Rendered DOM Comparison ---');
+  const comparison = SiteCrawler.compareSourceAndRenderedHtml(
+    '<html><body><main><p>Static introduction</p></main><script src="app.js"></script></body></html>',
+    '<html><body><main><p>Static introduction</p><p>Client rendered promotion</p></main><script src="app.js"></script><div id="app"></div></body></html>'
+  );
+  assert.strictEqual(comparison.available, true, 'Browser HTML comparison should be available for two documents');
+  assert.strictEqual(comparison.domChanged, true, 'Rendered DOM changes should be identified');
+  assert(comparison.renderedWordCount > comparison.sourceWordCount, 'Rendered text should have a higher word count');
+  assert(comparison.renderedOnlyWordCount > 0, 'Client-rendered words should be identified');
+  console.log('✅ Source/rendered DOM comparison tests passed');
+
+  console.log('--- 8. Testing Browser Disconnect Detection ---');
   assert.strictEqual(
     excludeCrawler.isBrowserDisconnectError(new Error('browserContext.newPage: Target page, context or browser has been closed')),
     true,
@@ -176,7 +190,7 @@ async function runTests() {
   );
   console.log('✅ Browser disconnect detection tests passed');
 
-  console.log('--- 8. Testing Immediate Crawl Cancellation State ---');
+  console.log('--- 9. Testing Immediate Crawl Cancellation State ---');
   const cancellationCrawler = new SiteCrawler({ seedUrl: 'https://example.com' });
   cancellationCrawler.isRunning = true;
   cancellationCrawler.abortController = new AbortController();
@@ -187,7 +201,7 @@ async function runTests() {
   assert.strictEqual(cancellationCrawler.queue.length, 0, 'Stop should discard queued URLs');
   console.log('✅ Immediate cancellation state test passed');
 
-  console.log('--- 9. Testing Content-Area Selector and Heuristic Detection ---');
+  console.log('--- 10. Testing Content-Area Selector and Heuristic Detection ---');
   const contentWords = Array.from({ length: 180 }, () => 'meaningful').join(' ');
   const selectorResult = Extractor.extractFromHtml(`
     <html><body><nav>Home Casino Sport</nav><div class="copy-section"><h2>Download the app</h2><p>${contentWords}</p><p>Useful editorial copy.</p></div><footer>Terms Privacy</footer></body></html>

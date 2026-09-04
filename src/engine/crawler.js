@@ -194,6 +194,51 @@ export class SiteCrawler extends EventEmitter {
     });
   }
 
+  /**
+   * Summarise the meaningful differences between the response source and the
+   * post-JavaScript DOM without retaining two potentially huge HTML documents.
+   */
+  static compareSourceAndRenderedHtml(sourceHtml, renderedHtml) {
+    const inspect = html => {
+      const $ = cheerio.load(html || '');
+      const text = $('body').text().replace(/\s+/g, ' ').trim();
+      const words = text ? text.split(/\s+/).filter(Boolean) : [];
+      const tokens = new Set(words.map(word => word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')).filter(Boolean));
+      return {
+        bytes: Buffer.byteLength(html || '', 'utf8'),
+        wordCount: words.length,
+        tokens,
+        scriptCount: $('script').length,
+        elementCount: $('*').length,
+        normalizedText: text.toLowerCase()
+      };
+    };
+
+    if (!sourceHtml || !renderedHtml) {
+      return {
+        available: false,
+        reason: !sourceHtml ? 'The original HTML response was unavailable for comparison.' : 'The rendered DOM was unavailable for comparison.'
+      };
+    }
+
+    const source = inspect(sourceHtml);
+    const rendered = inspect(renderedHtml);
+    const renderedOnlyWordCount = [...rendered.tokens].filter(token => !source.tokens.has(token)).length;
+    return {
+      available: true,
+      sourceHtmlBytes: source.bytes,
+      renderedHtmlBytes: rendered.bytes,
+      sourceWordCount: source.wordCount,
+      renderedWordCount: rendered.wordCount,
+      renderedOnlyWordCount,
+      sourceScriptCount: source.scriptCount,
+      renderedScriptCount: rendered.scriptCount,
+      sourceElementCount: source.elementCount,
+      renderedElementCount: rendered.elementCount,
+      domChanged: source.normalizedText !== rendered.normalizedText || source.elementCount !== rendered.elementCount
+    };
+  }
+
   registerRedirectDestination(requestedUrl, effectiveUrl) {
     const requested = Extractor.normalizeUrl(requestedUrl, this.baseOrigin);
     const effective = Extractor.normalizeUrl(effectiveUrl, effectiveUrl);
@@ -380,6 +425,11 @@ export class SiteCrawler extends EventEmitter {
 
       const html = await response.text();
       if (this.isCancellationRequested()) return;
+      crawlResult.renderComparison = {
+        available: false,
+        reason: 'Direct DOM mode does not execute JavaScript, so no rendered DOM comparison is available.',
+        sourceHtmlBytes: Buffer.byteLength(html || '', 'utf8')
+      };
       const extracted = Extractor.extractFromHtml(html, effectiveUrl, this.baseOrigin, {
         customSelector: this.customContentSelector,
         cheerio
@@ -580,6 +630,10 @@ export class SiteCrawler extends EventEmitter {
         await this.browserManager.autoScroll(page, 2000);
       }
       if (this.isCancellationRequested()) return;
+
+      const sourceHtml = mainResponse ? await mainResponse.text().catch(() => '') : '';
+      const renderedHtml = await page.content().catch(() => '');
+      crawlResult.renderComparison = SiteCrawler.compareSourceAndRenderedHtml(sourceHtml, renderedHtml);
 
       // Extract all page metadata, links, and custom content
       const extracted = await Extractor.extractPageData(page, effectiveUrl, this.baseOrigin, {

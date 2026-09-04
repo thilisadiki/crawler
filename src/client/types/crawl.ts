@@ -83,6 +83,21 @@ export interface CustomContent {
   wordCount?: number;
 }
 
+export interface RenderComparison {
+  available?: boolean;
+  reason?: string;
+  sourceHtmlBytes?: number;
+  renderedHtmlBytes?: number;
+  sourceWordCount?: number;
+  renderedWordCount?: number;
+  renderedOnlyWordCount?: number;
+  sourceScriptCount?: number;
+  renderedScriptCount?: number;
+  sourceElementCount?: number;
+  renderedElementCount?: number;
+  domChanged?: boolean;
+}
+
 export interface CrawlPage {
   url: string;
   statusCode?: number | null;
@@ -104,6 +119,7 @@ export interface CrawlPage {
   error?: string;
   links?: CrawledLink[];
   resources?: CrawledResource[];
+  renderComparison?: RenderComparison | null;
   customContent?: CustomContent;
 }
 

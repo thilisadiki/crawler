@@ -34,8 +34,14 @@ function contentFound(page: CrawlPage) {
   return Boolean(page.customContent?.detected);
 }
 
+function formatBytes(value?: number) {
+  if (!value) return '—';
+  return value >= 1024 * 1024 ? `${(value / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(value / 1024)} KB`;
+}
+
 function PageInspector({ page, onClose }: { page: CrawlPage; onClose: () => void }) {
   const content = page.customContent;
+  const comparison = page.renderComparison;
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="inspector" role="dialog" aria-modal="true" aria-label="Audited page details" onMouseDown={event => event.stopPropagation()}>
       <header><div><p className="eyebrow">Page inspection</p><h2>{page.title || 'Untitled page'}</h2><a href={page.url} target="_blank" rel="noreferrer">{page.url}</a></div><button className="icon-button" onClick={onClose} aria-label="Close inspection">×</button></header>
@@ -44,6 +50,7 @@ function PageInspector({ page, onClose }: { page: CrawlPage; onClose: () => void
         <div><span>Words</span><strong>{page.totalWords ?? page.wordCount ?? '—'}</strong></div><div><span>On-page links</span><strong>{page.links?.length ?? 0}</strong></div>
       </div>
       <section className="detail-section"><h3>SEO metadata</h3><dl><dt>Meta description</dt><dd>{page.metaDescription || 'Not present'}</dd><dt>H1</dt><dd>{page.h1 || page.h1List?.join(', ') || 'Not present'}</dd></dl></section>
+      <section className="detail-section"><h3>Source HTML vs rendered DOM</h3>{comparison?.available ? <><p><span className={comparison.domChanged ? 'tag positive' : 'tag neutral'}>{comparison.domChanged ? 'DOM changed after rendering' : 'No meaningful DOM change detected'}</span></p><div className="comparison-grid"><div><span>Source HTML</span><strong>{formatBytes(comparison.sourceHtmlBytes)}</strong></div><div><span>Rendered DOM</span><strong>{formatBytes(comparison.renderedHtmlBytes)}</strong></div><div><span>Source words</span><strong>{comparison.sourceWordCount?.toLocaleString() || 0}</strong></div><div><span>Rendered words</span><strong>{comparison.renderedWordCount?.toLocaleString() || 0}</strong></div><div><span>Rendered-only words</span><strong>{comparison.renderedOnlyWordCount?.toLocaleString() || 0}</strong></div><div><span>Elements</span><strong>{comparison.sourceElementCount?.toLocaleString() || 0} → {comparison.renderedElementCount?.toLocaleString() || 0}</strong></div><div><span>Scripts</span><strong>{comparison.sourceScriptCount || 0} → {comparison.renderedScriptCount || 0}</strong></div></div></> : <p className="comparison-unavailable">{comparison?.reason || 'This page has not been compared yet.'}</p>}</section>
       <section className="detail-section"><h3>Content area</h3><p><span className={content?.detected ? 'tag positive' : 'tag neutral'}>{content?.detected ? 'Detected' : 'Not detected'}</span> {content?.selectorUsed || 'No selector matched'}</p><p className="preview">{content?.fullText || content?.textSnippet || page.fullPageText || 'No rendered text was returned.'}</p></section>
     </section>
   </div>;

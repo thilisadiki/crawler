@@ -71,6 +71,8 @@ export class Exporter {
       { header: 'Internal Links', key: 'internalLinksCount', width: 14 },
       { header: 'External Links', key: 'externalLinksCount', width: 14 },
       { header: 'Latency (ms)', key: 'responseTimeMs', width: 14 },
+      { header: 'DOM Changed', key: 'domChanged', width: 14 },
+      { header: 'Rendered-only Words', key: 'renderedOnlyWordCount', width: 20 },
       { header: 'Error', key: 'error', width: 25 }
     ];
 
@@ -106,6 +108,8 @@ export class Exporter {
         internalLinksCount: r.internalLinksCount || 0,
         externalLinksCount: r.externalLinksCount || 0,
         responseTimeMs: r.responseTimeMs || 0,
+        domChanged: r.renderComparison?.available ? (r.renderComparison.domChanged ? 'YES' : 'NO') : 'N/A',
+        renderedOnlyWordCount: r.renderComparison?.renderedOnlyWordCount ?? '',
         error: r.error || ''
       });
 
@@ -597,6 +601,12 @@ export class Exporter {
       'Content Area Links Count',
       'Internal Links Count',
       'External Links Count',
+      'DOM Changed After Rendering',
+      'Source HTML Bytes',
+      'Rendered DOM Bytes',
+      'Source Words',
+      'Rendered Words',
+      'Rendered-only Words',
       'Error',
       'Timestamp'
     ];
@@ -619,6 +629,12 @@ export class Exporter {
       this.escapeCSV(r.customLinksCount || 0),
       this.escapeCSV(r.internalLinksCount || 0),
       this.escapeCSV(r.externalLinksCount || 0),
+      this.escapeCSV(r.renderComparison?.available ? (r.renderComparison.domChanged ? 'YES' : 'NO') : 'N/A'),
+      this.escapeCSV(r.renderComparison?.sourceHtmlBytes),
+      this.escapeCSV(r.renderComparison?.renderedHtmlBytes),
+      this.escapeCSV(r.renderComparison?.sourceWordCount),
+      this.escapeCSV(r.renderComparison?.renderedWordCount),
+      this.escapeCSV(r.renderComparison?.renderedOnlyWordCount),
       this.escapeCSV(r.error || ''),
       this.escapeCSV(r.timestamp)
     ]);
