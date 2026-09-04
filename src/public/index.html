@@ -363,16 +363,28 @@
 
         <!-- VIEW 3: Embedded Resources & Assets -->
         <div id="resources-view" class="view-container">
+          <div class="sub-filter-toolbar">
+            <div class="filter-tabs" id="resourceFilterTabs">
+              <button class="tab-pill active" data-resourcefilter="all">All (<span id="filterResourcesAll">0</span>)</button>
+              <button class="tab-pill" data-resourcefilter="stylesheet">CSS (<span id="filterResourcesStylesheet">0</span>)</button>
+              <button class="tab-pill" data-resourcefilter="script">JavaScript (<span id="filterResourcesScript">0</span>)</button>
+              <button class="tab-pill" data-resourcefilter="image">Images (<span id="filterResourcesImage">0</span>)</button>
+              <button class="tab-pill" data-resourcefilter="media-font">Media &amp; Fonts (<span id="filterResourcesMediaFont">0</span>)</button>
+              <button class="tab-pill" data-resourcefilter="loaded">Loaded (<span id="filterResourcesLoaded">0</span>)</button>
+              <button class="tab-pill" data-resourcefilter="blocked">Blocked (<span id="filterResourcesBlocked">0</span>)</button>
+              <button class="tab-pill" data-resourcefilter="error">Errors (<span id="filterResourcesError">0</span>)</button>
+            </div>
+          </div>
           <div class="table-container">
             <table class="enterprise-table" id="resourcesTable">
               <thead>
                 <tr>
-                  <th style="width: 55px;">#</th>
-                  <th style="width: 115px;">Type</th>
-                  <th>Resource URL</th>
-                  <th style="width: 155px;">Status</th>
-                  <th style="width: 120px;">Size</th>
-                  <th>Source Page</th>
+                  <th class="sortable-th" data-sort="id" style="width: 55px;"># <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="resourceType" style="width: 115px;">Type <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="url">Resource URL <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="status" style="width: 155px;">Status <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="sizeBytes" style="width: 120px;">Size <span class="sort-icon">↕</span></th>
+                  <th class="sortable-th" data-sort="sourceUrl">Source Page <span class="sort-icon">↕</span></th>
                 </tr>
               </thead>
               <tbody id="resourcesTableBody">

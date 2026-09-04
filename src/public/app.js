@@ -47,6 +47,7 @@ let allDiscoveredLinks = [];
 let allResources = [];
 let activeFilter = 'all';
 let activeLinkFilter = 'all';
+let activeResourceFilter = 'all';
 let activeIssueFilter = 'all';
 let currentMainView = 'pages-view';
 let searchQuery = '';
@@ -83,6 +84,7 @@ function rebuildResources() {
 // Sort States
 let pagesSort = { column: 'id', direction: 'asc' };
 let linksSort = { column: 'id', direction: 'asc' };
+let resourcesSort = { column: 'id', direction: 'asc' };
 let modalLinksSort = { column: 'statusCode', direction: 'asc' };
 
 // Form DOM Elements
@@ -147,6 +149,7 @@ const contentExplorerLayout = document.getElementById('contentExplorerLayout');
 const tableSearch = document.getElementById('tableSearch');
 const filterTabs = document.querySelectorAll('#pageFilterTabs .tab-pill');
 const linkFilterTabs = document.querySelectorAll('#linkFilterTabs .tab-pill');
+const resourceFilterTabs = document.querySelectorAll('#resourceFilterTabs .tab-pill');
 const pagesPaginationControls = {
   root: document.getElementById('pagesPagination'), summary: document.getElementById('pagesPaginationSummary'),
   page: document.getElementById('pagesPaginationPage'), previous: document.getElementById('pagesPaginationPrevious'),
@@ -272,6 +275,8 @@ function prepareNewCrawlUI() {
   allDiscoveredLinks = [];
   allResources = [];
   resourcesPagination.page = 1;
+  activeResourceFilter = 'all';
+  resourceFilterTabs.forEach(pill => pill.classList.toggle('active', pill.getAttribute('data-resourcefilter') === 'all'));
   activeIssueFilter = 'all';
   issuesPagination.page = 1;
   activeEngine = { mode: 'initializing', provider: null, error: null };
@@ -1072,9 +1077,65 @@ function renderAllLinksTable() {
 // VIEW 3: Embedded Resources & Assets
 function renderResourcesView() {
   const query = searchQuery.toLowerCase();
-  const matching = allResources.filter(resource => !query || [
-    resource.url, resource.resourceType, resource.sourceUrl, resource.discoveryStatus, resource.statusCode
-  ].some(value => String(value || '').toLowerCase().includes(query)));
+  const counts = { stylesheet: 0, script: 0, image: 0, mediaFont: 0, loaded: 0, blocked: 0, error: 0 };
+  for (const resource of allResources) {
+    const type = (resource.resourceType || '').toLowerCase();
+    if (type === 'stylesheet') counts.stylesheet++;
+    if (type === 'script') counts.script++;
+    if (type === 'image') counts.image++;
+    if (type === 'media' || type === 'font') counts.mediaFont++;
+    if (resource.discoveryStatus === 'Loaded' || (resource.statusCode >= 200 && resource.statusCode < 400)) counts.loaded++;
+    if (resource.discoveryStatus === 'Blocked by crawler') counts.blocked++;
+    if (resource.statusCode === 0 || resource.statusCode >= 400) counts.error++;
+  }
+  const setCount = (id, count) => { const element = document.getElementById(id); if (element) element.textContent = count.toLocaleString(); };
+  setCount('filterResourcesAll', allResources.length);
+  setCount('filterResourcesStylesheet', counts.stylesheet);
+  setCount('filterResourcesScript', counts.script);
+  setCount('filterResourcesImage', counts.image);
+  setCount('filterResourcesMediaFont', counts.mediaFont);
+  setCount('filterResourcesLoaded', counts.loaded);
+  setCount('filterResourcesBlocked', counts.blocked);
+  setCount('filterResourcesError', counts.error);
+
+  let matching = allResources.filter(resource => {
+    const matchesSearch = !query || [resource.url, resource.resourceType, resource.sourceUrl, resource.discoveryStatus, resource.statusCode]
+      .some(value => String(value || '').toLowerCase().includes(query));
+    if (!matchesSearch) return false;
+    const type = (resource.resourceType || '').toLowerCase();
+    if (activeResourceFilter === 'stylesheet') return type === 'stylesheet';
+    if (activeResourceFilter === 'script') return type === 'script';
+    if (activeResourceFilter === 'image') return type === 'image';
+    if (activeResourceFilter === 'media-font') return type === 'media' || type === 'font';
+    if (activeResourceFilter === 'loaded') return resource.discoveryStatus === 'Loaded' || (resource.statusCode >= 200 && resource.statusCode < 400);
+    if (activeResourceFilter === 'blocked') return resource.discoveryStatus === 'Blocked by crawler';
+    if (activeResourceFilter === 'error') return resource.statusCode === 0 || resource.statusCode >= 400;
+    return true;
+  });
+
+  matching.sort((a, b) => {
+    let valueA;
+    let valueB;
+    switch (resourcesSort.column) {
+      case 'id': valueA = allResources.indexOf(a); valueB = allResources.indexOf(b); break;
+      case 'resourceType': valueA = a.resourceType || ''; valueB = b.resourceType || ''; break;
+      case 'url': valueA = a.url || ''; valueB = b.url || ''; break;
+      case 'status': valueA = a.statusCode || a.discoveryStatus || ''; valueB = b.statusCode || b.discoveryStatus || ''; break;
+      case 'sizeBytes': valueA = Number(a.sizeBytes) || 0; valueB = Number(b.sizeBytes) || 0; break;
+      case 'sourceUrl': valueA = a.sourceUrl || ''; valueB = b.sourceUrl || ''; break;
+      default: valueA = 0; valueB = 0;
+    }
+    if (typeof valueA === 'string') return resourcesSort.direction === 'asc' ? valueA.localeCompare(valueB) : valueB.localeCompare(valueA);
+    return resourcesSort.direction === 'asc' ? valueA - valueB : valueB - valueA;
+  });
+
+  document.querySelectorAll('#resourcesTable .sortable-th').forEach(header => {
+    const column = header.getAttribute('data-sort');
+    const icon = header.querySelector('.sort-icon');
+    header.classList.toggle('sorted-asc', column === resourcesSort.column && resourcesSort.direction === 'asc');
+    header.classList.toggle('sorted-desc', column === resourcesSort.column && resourcesSort.direction === 'desc');
+    if (icon) icon.textContent = column === resourcesSort.column ? (resourcesSort.direction === 'asc' ? '▲' : '▼') : '↕';
+  });
 
   if (viewCountResources) viewCountResources.textContent = allResources.length.toLocaleString();
   if (!matching.length) {
@@ -1402,6 +1463,21 @@ document.querySelectorAll('#allLinksTable .sortable-th').forEach(th => {
   });
 });
 
+// Resources Table Header Sort Click Listener
+document.querySelectorAll('#resourcesTable .sortable-th').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.getAttribute('data-sort');
+    if (resourcesSort.column === col) {
+      resourcesSort.direction = resourcesSort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+      resourcesSort.column = col;
+      resourcesSort.direction = 'asc';
+    }
+    resourcesPagination.page = 1;
+    renderResourcesView();
+  });
+});
+
 // Link Filter Sub-tabs Listener
 document.querySelectorAll('#linkFilterTabs .tab-pill').forEach(pill => {
   pill.addEventListener('click', () => {
@@ -1410,6 +1486,17 @@ document.querySelectorAll('#linkFilterTabs .tab-pill').forEach(pill => {
     activeLinkFilter = pill.getAttribute('data-linkfilter');
     linksPagination.page = 1;
     renderAllLinksTable();
+  });
+});
+
+// Resource Filter Sub-tabs Listener
+resourceFilterTabs.forEach(pill => {
+  pill.addEventListener('click', () => {
+    resourceFilterTabs.forEach(item => item.classList.remove('active'));
+    pill.classList.add('active');
+    activeResourceFilter = pill.getAttribute('data-resourcefilter');
+    resourcesPagination.page = 1;
+    renderResourcesView();
   });
 });
 
@@ -1538,6 +1625,8 @@ resetBtn.addEventListener('click', async () => {
       allDiscoveredLinks = [];
       allResources = [];
       resourcesPagination.page = 1;
+      activeResourceFilter = 'all';
+      resourceFilterTabs.forEach(pill => pill.classList.toggle('active', pill.getAttribute('data-resourcefilter') === 'all'));
       activeIssueFilter = 'all';
       issuesPagination.page = 1;
   activeEngine = null;
