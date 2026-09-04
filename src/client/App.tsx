@@ -86,7 +86,9 @@ export default function App() {
       // The dashboard begins in single-URL mode (1 page). Restore the legacy
       // 50-page default the first time the user changes to a broader scope.
       maxPages: single ? 1 : (current.crawlScope === 'single-url' ? 50 : Math.max(2, current.maxPages)),
-      maxDepth: single ? 0 : Math.max(1, current.maxDepth)
+      // Keep a single-page audit at depth 0, but restore the legacy default
+      // of three link levels when entering a multi-page crawl scope.
+      maxDepth: single ? 0 : (current.crawlScope === 'single-url' ? 3 : Math.max(1, current.maxDepth))
     }));
   }
   async function submit(event: FormEvent) {
