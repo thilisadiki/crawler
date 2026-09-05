@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { CrawlPage } from '../../types/crawl';
+import './pages.css';
 
 type PageTab = 'all' | 'title' | 'description' | 'keywords' | 'h1' | 'h2' | 'content';
 type PageFilter = 'all' | '200' | 'content' | 'missing' | 'errors';
@@ -82,7 +83,7 @@ export function PagesExplorer({ pages, onInspectPage }: { pages: CrawlPage[]; on
   function changeTab(value: PageTab) { setTab(value); setFilter('all'); setPage(1); }
   function changeFilter(value: PageFilter) { setFilter(value); setPage(1); }
   function changeSort(key: SortKey) { setSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' })); setPage(1); }
-  function header(label: string, key: SortKey) { return <th><button className="sort-button" onClick={() => changeSort(key)}>{label} <span>{sort.key === key ? (sort.direction === 'asc' ? '▲' : '▼') : '↕'}</span></button></th>; }
+  function header(label: string, key: SortKey) { return <th scope="col" aria-sort={sort.key === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button className="sort-button" onClick={() => changeSort(key)}>{label} <span>{sort.key === key ? (sort.direction === 'asc' ? '▲' : '▼') : '↕'}</span></button></th>; }
 
   const filters: Array<[PageFilter, string]> = tab === 'all'
     ? [['all', 'All pages'], ['200', '200 OK'], ['content', 'Content found'], ['missing', 'Content missing'], ['errors', 'Errors']]
@@ -90,7 +91,34 @@ export function PagesExplorer({ pages, onInspectPage }: { pages: CrawlPage[]; on
   return <>
     <nav className="page-data-tabs" aria-label="On-page data categories">{TABS.map(item => <button key={item.value} className={tab === item.value ? 'active' : ''} onClick={() => changeTab(item.value)}>{item.label} <span>{tabCounts[item.value]}</span></button>)}</nav>
     <div className="toolbar page-data-toolbar"><input value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder={tab === 'all' ? 'Search URLs, titles, descriptions or status codes…' : `Search URLs or ${tabValueLabel(tab).toLowerCase()}…`} />{filters.map(([value, label]) => <button key={value} className={filter === value ? 'pill active' : 'pill'} onClick={() => changeFilter(value)}>{label}</button>)}</div>
-    {tab === 'all' ? <div className="table-wrap"><table><thead><tr>{header('#', 'index')}{header('Status', 'status')}{header('URL', 'url')}{header('Title', 'value')}{header('Content area', 'content')}{header('Links', 'links')}{header('Latency', 'latency')}<th /></tr></thead><tbody>{rows.length ? rows.map(({ page: item }, index) => <tr key={item.url}><td>{(currentPage - 1) * pageSize + index + 1}</td><td><span className={item.statusCode === 200 ? 'code success' : 'code failure'}>{item.statusCode ?? '—'}</span></td><td className="url"><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a></td><td className="page-data-value" title={item.title}>{item.title || '—'}</td><td><span className={contentFound(item) ? 'tag positive' : 'tag neutral'}>{contentFound(item) ? `Found (${item.customContent?.wordCount || 0}w)` : 'None'}</span></td><td>{item.links?.length || 0}</td><td>{item.responseTimeMs || item.responseTime ? `${item.responseTimeMs || item.responseTime}ms` : '—'}</td><td><button className="inspect" onClick={() => onInspectPage(item, 'overview')}>Inspect</button></td></tr>) : <tr><td colSpan={8} className="empty">No audited pages match the selected filter.</td></tr>}</tbody></table></div> : <div className="table-wrap"><table><thead><tr>{header('#', 'index')}{header('Status', 'status')}{header('URL', 'url')}{header(tabValueLabel(tab), 'value')}{header(countLabel(tab), 'length')}<th /></tr></thead><tbody>{rows.length ? rows.map(({ page: item, value }, index) => <tr key={item.url}><td>{(currentPage - 1) * pageSize + index + 1}</td><td><span className={item.statusCode === 200 ? 'code success' : 'code failure'}>{item.statusCode ?? '—'}</span></td><td className="url"><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a></td><td className="page-data-value" title={value}>{value}</td><td>{countFor(item, tab, value).toLocaleString()}</td><td><button className="inspect" onClick={() => onInspectPage(item, tab === 'content' ? 'content' : 'overview')}>Inspect</button></td></tr>) : <tr><td colSpan={6} className="empty">No pages with {tabValueLabel(tab).toLowerCase()} data match the selected filter.</td></tr>}</tbody></table></div>}
+    <div className="table-wrap pages-table-wrap">
+      <table className={tab === 'all' ? 'pages-table pages-table-all' : 'pages-table pages-table-data'} aria-label={tab === 'all' ? 'All audited pages' : `Pages with ${tabValueLabel(tab).toLowerCase()}`}>
+        <colgroup>
+          <col className="page-column-index" /><col className="page-column-status" />
+          <col className="page-column-url" /><col className="page-column-value" />
+          {tab === 'all' ? <><col className="page-column-content" /><col className="page-column-links" /><col className="page-column-latency" /></> : <col className="page-column-count" />}
+          <col className="page-column-action" />
+        </colgroup>
+        <thead><tr>
+          {header('#', 'index')}{header('Status', 'status')}{header('URL', 'url')}
+          {header(tab === 'all' ? 'Title' : tabValueLabel(tab), 'value')}
+          {tab === 'all' ? <>{header('Content area', 'content')}{header('Links', 'links')}{header('Latency', 'latency')}</> : header(countLabel(tab), 'length')}
+          <th scope="col">Action</th>
+        </tr></thead>
+        <tbody>{rows.length ? rows.map(({ page: item, value }, index) => <tr key={item.url}>
+          <td data-label="#">{(currentPage - 1) * pageSize + index + 1}</td>
+          <td data-label="Status"><span className={item.statusCode === 200 ? 'code success' : 'code failure'}>{item.statusCode ?? '—'}</span></td>
+          <td data-label="URL" className="url"><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a></td>
+          <td data-label={tab === 'all' ? 'Title' : tabValueLabel(tab)} className="page-data-value">{value || '—'}</td>
+          {tab === 'all' ? <>
+            <td data-label="Content area"><span className={contentFound(item) ? 'tag positive' : 'tag neutral'}>{contentFound(item) ? `Found (${item.customContent?.wordCount || 0}w)` : 'None'}</span></td>
+            <td data-label="Links">{item.links?.length || 0}</td>
+            <td data-label="Latency">{item.responseTimeMs || item.responseTime ? `${item.responseTimeMs || item.responseTime}ms` : '—'}</td>
+          </> : <td data-label={countLabel(tab)}>{countFor(item, tab, value).toLocaleString()}</td>}
+          <td data-label="Action"><button className="inspect" onClick={() => onInspectPage(item, tab === 'content' ? 'content' : 'overview')}>Inspect</button></td>
+        </tr>) : <tr><td colSpan={tab === 'all' ? 8 : 6} className="empty">{tab === 'all' ? 'No audited pages match the selected filter.' : `No pages with ${tabValueLabel(tab).toLowerCase()} data match the selected filter.`}</td></tr>}</tbody>
+      </table>
+    </div>
     {filtered.length > 0 && <div className="pagination"><span>Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)} of {filtered.length.toLocaleString()}</span><label>Rows <select value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="50">50</option><option value="100">100</option><option value="250">250</option></select></label><button className="secondary" disabled={currentPage === 1} onClick={() => setPage(current => current - 1)}>Previous</button><span>Page {currentPage} of {totalPages}</span><button className="secondary" disabled={currentPage === totalPages} onClick={() => setPage(current => current + 1)}>Next</button></div>}
   </>;
 }

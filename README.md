@@ -71,6 +71,8 @@ npm run client:build
 
 The test suite includes public documentation, navigation and protected-route regression checks. Run those alone with `npm run test:docs`; they use a temporary local server with test-only credentials and database storage disabled.
 
+Run `npm run test:layout` for the browser-based Pages table regression checks. It builds the client and checks all seven data tabs at desktop and mobile widths, plus sorting, filtering and content inspection. Chromium must be available; the test uses synthetic results and no database.
+
 `npm run dev` watches the Node server but does not rebuild React. Use `client:build` and Express at `/app` for integrated UI/API testing. `client:dev` starts Vite separately; no API proxy is currently configured, so it is not a complete authenticated app server.
 
 The client build is committed for the current deployment workflow. Commit agreed changes locally; push only when a deployment batch is approved.
