@@ -1,72 +1,58 @@
-# Hostinger Cloud deployment
+# Hostinger deployment notes
 
-Use Hostinger's Node.js Web App deployment, not the Docker workflow.
+This describes the repository's existing deployment workflow, not every Hostinger plan or current hPanel screen. Full operating instructions and environment reference are in [the public guide](src/public/info/docs.html#deployment), served at `/docs`.
 
-## Build settings
+## Application configuration
 
-- Framework: Express.js or Other
-- Node.js: 22.x (22.17.0 or newer)
-- Entry file: `server.js`
-- Start command: `npm start`
-- Output directory: leave empty
+- Node.js 22.17.0 or newer.
+- Entry file: `server.js`.
+- Start command: `npm start`.
+- Express serves both the API and the committed React bundle.
+- Dependencies must be installed from `package-lock.json`.
+- A production Vite build is unnecessary when deploying the committed `src/public/next/` output. If you introduce a remote client build, install development dependencies too.
 
-Hostinger installs the dependencies from `package-lock.json`. The application does not need a
-build command or a Playwright browser download.
+The root URL is public marketing content. The private dashboard is at `/app`; administration is at `/admin`. Public documentation is at `/docs`.
 
-## Runtime
+## Private environment configuration
 
-On Linux, the application automatically launches the bundled `@sparticuz/chromium` browser.
-For an explicit setting, add this environment variable in hPanel:
+Set `ADMIN_PASSWORD` and a long random `ADMIN_SESSION_SECRET` through the hosting environment. Do not place real credentials in Git, public files, screenshots or client-side variables.
+
+Set `NODE_ENV=production` and the correct `PUBLIC_APP_URL`. Keep the host-provided port configuration. Express currently trusts one reverse-proxy hop; verify HTTPS redirects and secure cookie behaviour against the actual deployment topology.
+
+Optional durable history requires all of `DB_HOST`, `DB_NAME`, `DB_USER` and `DB_PASSWORD`; `DB_PORT` defaults to 3306. Schema initialization creates missing tables and applies supported additive columns. Confirm storage status and write errors in administration/runtime logs after deployment.
+
+## Browser and workload defaults
+
+Linux prefers the bundled Sparticuz Chromium runtime, avoiding many missing desktop-library failures. There is no separate production Playwright browser download in this workflow.
+
+Optional explicit configuration:
 
 ```text
 CHROMIUM_ENGINE=sparticuz-only
 MAX_CONCURRENT_CRAWLS=3
 MAX_WORKERS_PER_CRAWL=1
+MAX_UNLIMITED_CRAWL_PAGES=50000
 LINK_CHECK_CONCURRENCY=6
 LINK_CHECK_DEADLINE_MS=30000
-PUBLIC_APP_URL=https://workva.co.za
 ```
 
-`MAX_CONCURRENT_CRAWLS` controls how many isolated users may crawl simultaneously (allowed range
-1–8). `MAX_WORKERS_PER_CRAWL` controls the number of browser pages used by each crawl (allowed
-range 1–3). The application defaults to 3 simultaneous crawls with 1 worker each. Increase the
-crawl count before increasing workers, because every additional worker creates another rendered
-page and raises Chromium memory usage.
+These are application defaults, not a guarantee that a particular plan can sustain that workload. Keep one page worker per crawl and observe simultaneous-load memory, CPU, latency, failures and browser restarts before raising capacity.
 
-The link-check settings prevent a slow or rate-limited target from occupying a crawl slot
-indefinitely. Keep the defaults when enabling simultaneous crawls; raising link concurrency can
-multiply outbound requests across all active users.
+Crawls share a Chromium process on this Linux configuration, with isolated page contexts closed after extraction. Queues, controls and results belong to dashboard sessions. Saved history is shared within the authenticated administrator workspace.
 
-On Hostinger Linux, simultaneous crawls share one Chromium process but use separate browser
-contexts. Cookies, pages, geo settings, crawl queues, results, controls, and exports remain isolated
-per user. This avoids duplicating Chromium's parent-process overhead in constrained containers.
+## Deployment checklist
 
-Suggested starting points:
+1. Run `npm ci`, `npm test` and `npm run client:build` locally.
+2. Review and commit source changes and regenerated client assets.
+3. Push only when the deployment batch is approved. The connected GitHub branch triggers Hostinger deployment.
+4. Verify `/` and `/docs` are public, while `/app`, `/admin`, crawler data and exports require sign-in.
+5. Sign in, test a small permitted crawl, inspect its engine status and check saved history if MySQL is configured.
+6. Confirm exports, source/rendered inspection, admin session revocation and runtime errors as appropriate for the changed feature.
 
-| Host resources | Concurrent crawls | Workers per crawl |
-| --- | ---: | ---: |
-| 4 GB RAM / 4 CPU | 2 | 1 |
-| 6 GB RAM / 5 CPU | 2–3 | 1 |
-| 12 GB RAM / 6 CPU | 4 | 1 |
-| 15–16 GB RAM / 8 CPU | 5–6 | 1 |
+The authenticated `/api/debug/browser` endpoint provides launch diagnostics; it is not a lightweight public health check. Direct HTML fallback cannot render JavaScript, so investigate browser errors if dynamic pages lose content.
 
-Apply environment-variable changes in hPanel before testing. Start conservatively and check memory,
-CPU, crawl latency, browser restart count, and HTTP 503 responses before increasing either limit.
+A deployment restarts process-local sessions and unfinished crawl queues. Existing saved MySQL records remain, but queue resumption is not implemented. Schedule deployments around active work.
 
-After deployment, open `/api/debug/browser`. A working deployment returns HTTP 200 with values
-similar to:
+## Backups
 
-```json
-{
-  "success": true,
-  "provider": "sparticuz",
-  "browserVersion": "149.0.7827.22"
-}
-```
-
-The dashboard should display **Cloud Browser Active** during a crawl. If it displays
-**Direct DOM Active**, inspect the diagnostic endpoint and Hostinger runtime logs for the original
-browser launch error.
-
-Keep one worker per crawl initially. Increase `MAX_WORKERS_PER_CRAWL` only after checking CPU and
-memory usage in hPanel under simultaneous load.
+Hosting backups are managed outside the application. Confirm that the relevant database and files are included and that restoration works. The admin clear-history action has no in-app undo and preserves security events; restoring deleted history requires an appropriate external backup.

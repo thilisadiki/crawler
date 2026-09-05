@@ -90,7 +90,7 @@ app.get('/robots.txt', (req, res) => {
 });
 
 app.get('/sitemap.xml', (req, res) => {
-  const pages = ['', '/about', '/privacy', '/terms', '/acceptable-use'];
+  const pages = ['', '/about', '/privacy', '/terms', '/acceptable-use', '/docs'];
   const urls = pages.map(page => `  <url><loc>${PUBLIC_APP_URL}${page}/</loc></url>`).join('\n');
   res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`);
 });
@@ -100,6 +100,7 @@ function sendInformationPage(filename) {
 }
 
 app.get('/about', sendInformationPage('about.html'));
+app.get('/docs', sendInformationPage('docs.html'));
 app.get('/privacy', sendInformationPage('privacy.html'));
 app.get('/terms', sendInformationPage('terms.html'));
 app.get('/acceptable-use', sendInformationPage('acceptable-use.html'));

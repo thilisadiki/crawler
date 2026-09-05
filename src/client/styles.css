@@ -29,3 +29,6 @@ main { max-width: 1540px; margin: 0 auto; padding: 24px clamp(16px, 3vw, 44px) 4
 @media (max-width: 850px) { .html-code-grid { grid-template-columns: 1fr; } .html-code-grid pre { height: 330px; } }
 @media (max-width: 760px) { .history-table { min-width: 760px; table-layout: auto; } }
 @media (max-width: 760px) { .issue-workbench { grid-template-columns: 1fr; }.issue-catalogue { border-right: 0; border-bottom: 1px solid #dce5ef; }.issue-catalogue-head, .issue-group-row { grid-template-columns: minmax(0, 1fr) 94px 45px; gap: 8px; padding-left: 11px; padding-right: 11px; }.issue-detail { padding: 15px; } }
+.topbar .docs-link { color: #dae4ff; font-size: .8rem; text-underline-offset: 3px; }
+.topbar .docs-link:hover { color: #fff; }
+.topbar .docs-link:focus-visible { outline: 2px solid #fff; outline-offset: 4px; }

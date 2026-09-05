@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// The legacy dashboard continues to be served from /. Keeping this build under
-// /next/ makes the migration reversible until it reaches feature parity.
+// Express serves the supported dashboard at /app. Compiled assets retain the
+// protected /next/ base path; / is the public product homepage.
 export default defineConfig({
   root: 'src/client',
   base: '/next/',

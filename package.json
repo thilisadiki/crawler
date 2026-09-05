@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node test-features.js && npm run test:live && npm run test:seo",
+    "test": "node test-features.js && npm run test:live && npm run test:seo && npm run test:docs",
+    "test:docs": "node --test test-public-docs.js",
     "test:seo": "node --experimental-strip-types --test test-seo-issues.js",
     "test:live": "node --experimental-strip-types --test test-live-crawler.js",
     "client:dev": "vite --host 0.0.0.0",

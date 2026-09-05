@@ -175,7 +175,7 @@ export default function App() {
   }
 
   return <div className="app-shell">
-    <header className="topbar"><div><span className="brand-mark">⌘</span><span className="brand">CrawlLoom <small>Browser-rendered SEO crawler</small></span></div><div className="topbar-status"><span className="crawl-capacity">{crawlSlotLabel}</span><span className={`status ${crawler.state}`}><i />{statusLabel(crawler.state, crawler.engine?.mode)}</span></div></header>
+    <header className="topbar"><div><span className="brand-mark">⌘</span><span className="brand">CrawlLoom <small>Browser-rendered SEO crawler</small></span></div><div className="topbar-status"><a className="docs-link" href="/docs" target="_blank" rel="noopener noreferrer" aria-label="Documentation (opens in a new tab)">Documentation</a><span className="crawl-capacity">{crawlSlotLabel}</span><span className={`status ${crawler.state}`}><i />{statusLabel(crawler.state, crawler.engine?.mode)}</span></div></header>
     <main>
       <section className="card config-card">
         <div className="section-heading"><div><p className="eyebrow">Crawl target</p><h1>Start a browser-rendered audit</h1></div><button className="secondary" type="button" onClick={() => setAdvanced(open => !open)}>{advanced ? 'Hide advanced' : 'Advanced directives'}</button></div>

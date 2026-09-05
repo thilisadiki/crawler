@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CrawlLoom Documentation — User & Developer Guide</title>
+  <meta name="description" content="Learn how to use CrawlLoom: crawl settings, rendered content, SEO reports, exports, saved history, private access, local setup and deployment.">
+  <link rel="canonical" href="https://workva.co.za/docs/">
+  <meta property="og:title" content="CrawlLoom Documentation">
+  <meta property="og:description" content="The user, operator and developer guide to CrawlLoom.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://workva.co.za/docs/">
+  <link rel="stylesheet" href="/info/info.css">
+  <link rel="stylesheet" href="/info/docs.css">
+</head>
+<body class="docs-page">
+  <a class="skip-link" href="#documentation">Skip to documentation</a>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="/">Crawl<span>Loom</span></a><nav class="site-nav" aria-label="Primary"><a href="/about">About</a><a href="/app">Open dashboard</a></nav></div></header>
+  <div class="docs-layout">
+    <nav class="docs-toc" aria-label="On this page"><h2>In this guide</h2><ol><li><a href="#start">Start an audit</a></li><li><a href="#scope">Scope, limits & advanced settings</a></li><li><a href="#dashboard">Reading the dashboard</a></li><li><a href="#rendering">Rendering & content detection</a></li><li><a href="#links">Redirects, links & resources</a></li><li><a href="#issues">SEO rules & duplicate content</a></li><li><a href="#exports">Exporting results</a></li><li><a href="#history">Saved history & database storage</a></li><li><a href="#sessions">Live updates & simultaneous crawls</a></li><li><a href="#security">Private access & administration</a></li><li><a href="#development">Local setup & development</a></li><li><a href="#deployment">Deployment & environment reference</a></li><li><a href="#architecture">Code map & API reference</a></li><li><a href="#troubleshooting">Troubleshooting & known boundaries</a></li></ol></nav>
+    <main id="documentation">
+      <p class="eyebrow">User · Operator · Developer</p>
+      <h1>CrawlLoom documentation</h1>
+      <p class="lede">From your first crawl to running and maintaining the app. This guide is public; your dashboard, reports and administration remain private.</p>
+      <p class="small-print">Updated 5 September 2026 · No sign-in required · Print this page to save a PDF</p>
+      <section class="docs-section" id="start" aria-labelledby="start-title"><h2 id="start-title">Start an audit</h2>
+<p>CrawlLoom is a browser-rendered SEO crawler and a focused alternative to Screaming Frog for inspecting dynamic website content. It can extract JavaScript-rendered and Kentico-delivered content, but it does not implement every Screaming Frog feature or identify a CMS with certainty.</p>
+<ol><li>Open <a href="/app">the dashboard</a> and sign in using the password supplied by the operator. The same login protects <a href="/admin">administration</a>.</li><li>Enter a target such as <code>example.com</code> or <code>https://www.example.com/section/</code>. A bare hostname is expanded to HTTPS.</li><li>Select the crawl scope. The initial <strong>Single URL</strong> setting audits only one page. Choose <strong>Exact hostname</strong> to follow links across that host.</li><li>Set the page limit and, if needed, open Advanced Directives &amp; Exclusions. Switching to a multi-page scope normally starts with 50 pages and depth 3.</li><li>Execute the crawl. The main button changes to Pause and then Resume. Abort stops the run; Clear / Reset clears the current working results, not saved database history.</li></ol>
+<p>Only crawl sites you own or have permission to audit. A successful HTTP response does not guarantee that every dynamic component has finished loading.</p>
+<h3>When an audit finishes</h3><p>A crawl you started that completes with at least 50 audited pages triggers an in-app notification. Desktop notifications depend on browser support and permission. Aborted runs and loading saved history do not count as completed-crawl notifications.</p></section>
+      <section class="docs-section" id="scope" aria-labelledby="scope-title"><h2 id="scope-title">Scope, limits & advanced settings</h2>
+<div class="table-scroll"><table><caption>Crawl boundaries</caption><thead><tr><th>Scope</th><th>What gets audited</th></tr></thead><tbody>
+<tr><td>Single URL</td><td>Only the target page, with its on-page links and content. Page limit 1 and depth 0 are enforced.</td></tr>
+<tr><td>Exact hostname</td><td>Discovered eligible pages on the target hostname, including its bare / www aliases.</td></tr>
+<tr><td>Subpath</td><td>Eligible pages within the target path prefix. Use a trailing slash, such as <code>/section/</code>, to specify a folder boundary.</td></tr>
+<tr><td>Subdomains</td><td>A broader host-suffix boundary based on the supplied hostname. This is a crawl setting, not a substitute for network security rules.</td></tr>
+</tbody></table></div>
+<h3>Page limit and depth are different</h3><p>The page limit controls <em>how many</em> pages may be audited. Depth controls <em>how many links away</em> from the starting page the crawler follows: the starting page is depth 0, its linked pages are depth 1, and their links are depth 2. A depth of 3 does not mean three pages.</p>
+<p><strong>No page limit</strong> removes the user-selected count, but the depth, scope, exclusions and server safety ceiling still apply. The default server ceiling is 50,000 pages. A crawl can finish below its limit when no eligible URLs remain.</p>
+<div class="table-scroll"><table><caption>Advanced controls</caption><thead><tr><th>Setting</th><th>Behaviour</th></tr></thead><tbody>
+<tr><td>Max crawl depth</td><td>0–20; multi-page default 3.</td></tr>
+<tr><td>Worker threads</td><td>Default 1. These are concurrent asynchronous page workers, not Node.js worker threads or dedicated CPU cores. The server controls the maximum.</td></tr>
+<tr><td>Rate limiter</td><td>Default 500 ms between worker requests. It is a per-worker delay, not a global requests-per-second guarantee. The input accepts 0–5,000 ms; the current engine falls back to 500 ms when given zero.</td></tr>
+<tr><td>Dynamic auto-scroll</td><td>Enabled by default. Performs a bounded scroll to encourage lazy content to load; it does not exhaust infinite-scroll sites.</td></tr>
+<tr><td>Custom content selector</td><td>Blank enables automatic content detection. A supplied CSS selector requests that specific area; if it does not match, automatic fallback is not used.</td></tr>
+<tr><td>Allow-only / disallow patterns</td><td>Regular expressions, one per line. For example, <code>/blog/</code> includes a path fragment. Each list permits up to 30 entries, 250 characters each. Invalid and some unsafe patterns are rejected.</td></tr>
+<tr><td>Robots.txt enforcement</td><td>Optional, off by default. The current parser is best-effort and fetches the starting origin’s rules; it is not a complete multi-origin robots compliance system.</td></tr>
+<tr><td>Region</td><td>Auto or South Africa, Ghana, Kenya, Nigeria, United Kingdom or United States. Changes browser locale, timezone, location hints and some headers—not the hosting server’s actual public IP.</td></tr>
+<tr><td>Target-domain lock</td><td>Enabled by default. The current browser navigation handler logs cross-domain redirects; do not rely on this setting as a guaranteed redirect block. Queue scope and network checks are separate.</td></tr>
+</tbody></table></div>
+<p>Custom proxy endpoints are disabled. Request settings do not make a crawl anonymous or bypass a website’s access controls.</p>
+<h3>What target sites see</h3><p>Browser, direct-page and link-check requests currently use this browser-style User-Agent, rather than a CrawlLoom-branded crawler name:</p>
+<pre><code>Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36</code></pre>
+<p>The robots.txt fetch uses a shorter Mozilla/macOS User-Agent. Target logs can still record the hosting server’s real public IP and request patterns. The advertised browser version is a header value, not necessarily the installed Chromium version.</p></section>
+      <section class="docs-section" id="dashboard" aria-labelledby="dashboard-title"><h2 id="dashboard-title">Reading the dashboard</h2>
+<ul><li><strong>Pages:</strong> search, filter, sort and paginate audited pages. The default page size is 50 rows. All pages shows the complete result set; Page title, Meta description, Meta keywords, H1, H2 and Content show only pages with the corresponding data. To find missing H1s, use All pages or SEO issues—not the H1 subtab.</li>
+<li><strong>Discovered links &amp; anchors:</strong> inspect destinations, anchor text, source pages, internal/external classification, content-area membership, status and redirects.</li>
+<li><strong>Resources &amp; assets:</strong> search, sort and filter scripts, styles, images, fonts, media and other discovered resources. Source-page information shows where an asset was encountered.</li>
+<li><strong>SEO issues:</strong> select an issue category in the compact list to filter affected records. Search, severity indicators, pagination and Inspect help review each finding.</li>
+<li><strong>Extracted content:</strong> review detected content areas, headings and extracted text; search and copy content. Text cards are paginated separately.</li>
+<li><strong>History:</strong> browse saved MySQL runs and load a selected run into the same dashboard tabs.</li></ul>
+<p>Inspect opens a tabbed page dialog with Overview &amp; SEO directives, Content area, Discovered links and source-versus-rendered code tools. Inspect from the Content subtab opens the content view. Long content and tables may require scrolling; exports provide another way to examine large audits.</p>
+<p>Summary counts measure different things: audited pages, queued URLs, discovered link records, detected content areas and errors. A link appearing on multiple source pages can contribute multiple records. Issue totals count findings, not unique affected pages.</p></section>
+      <section class="docs-section" id="rendering" aria-labelledby="rendering-title"><h2 id="rendering-title">Rendering & content detection</h2>
+<h3>Browser rendering versus direct HTML</h3><p>The engine first attempts Chromium rendering through Playwright. On managed Linux hosting it prefers the bundled Sparticuz Chromium. It waits for document loading and bounded hydration checks, then optionally scrolls and extracts the DOM. It cannot guarantee readiness of every SPA, delayed API request, login wall or interactive widget.</p>
+<p>If browser startup or a page render fails, direct HTML extraction can still read the server response. <strong>Direct DOM / HTTP mode does not execute JavaScript.</strong> This explains why a server-rendered homepage may contain rich content while other client-rendered routes appear empty. Check the engine indicator and runtime error before interpreting missing content as an SEO problem.</p>
+<h3>“Content area not detected” does not mean “no page content”</h3><p>The app separately extracts full-page text and identifies a useful main content block. With no custom selector, it tries known content selectors and then scores semantic or structured containers, favouring headings and paragraphs over navigation, menus, cookie notices and link-heavy blocks. The heuristic requires at least 120 words and sufficient structure and score.</p>
+<p>A short valid page, an unusual template or an unmatched custom selector can have full-page text without a detected content area. Inspect the page’s text and DOM, clear a stale custom selector to enable automatic detection, or supply a selector matching the intended section. Detection is not proof that the content came from Kentico.</p>
+<h3>Source HTML versus rendered DOM</h3><p>Comparison metrics describe the server HTML and the extracted rendered DOM: bytes, words, scripts, elements and whether the DOM changed. The inspector can also fetch the actual source and rendered code while the crawler is idle.</p>
+<p>Code previews are captured on demand and capped at approximately 2 MB per side. They are not saved historical HTML snapshots: opening code for an old audit captures the website as it exists now. If rendering fails, the comparison explains the limitation. No screenshot or complete offline website archive is stored.</p></section>
+      <section class="docs-section" id="links" aria-labelledby="links-title"><h2 id="links-title">Redirects, links & resources</h2>
+<p>The crawl queue normalizes URLs and tracks visited destinations to avoid repeatedly auditing the same page after a root / www redirect. Link records retain the original target and, when checked, the initial status, redirect chain, final URL and final status. A redirect can therefore remain visible even when the destination is not audited twice.</p>
+<p>Link checking uses bounded parallel HTTP requests, typically HEAD with GET fallback. A link check is not a browser-rendered page audit. Timeouts, access blocks, unsupported schemes and unverified destinations must be interpreted separately from a confirmed HTTP 404.</p>
+<p>Resource discovery combines references in the DOM with observed browser requests. To reduce memory and bandwidth, the browser intentionally blocks some images, media, fonts and analytics requests. A blocked resource is not automatically broken. An unknown status or size is not evidence that the resource is empty or missing.</p>
+<p>Only metadata about assets is retained; CSS, JavaScript, images, fonts and media binaries are not downloaded into a permanent asset library. Resources injected after the bounded extraction window or requiring interactions may not be discovered.</p></section>
+      <section class="docs-section" id="issues" aria-labelledby="issues-title"><h2 id="issues-title">SEO rules & duplicate content</h2>
+<p>The dashboard and CSV / Excel exports use the same rules from <code>src/shared/seoIssues.js</code>. Most on-page checks apply to HTTP 200 results. These are review prompts, not search-engine ranking guarantees.</p>
+<div class="table-scroll"><table><caption>Current issue categories</caption><thead><tr><th>Category</th><th>Checks</th></tr></thead><tbody>
+<tr><td>Access and links</td><td>Crawl error; broken internal link; redirected internal link.</td></tr>
+<tr><td>Page titles</td><td>Missing; duplicate; shorter than 30 characters; longer than 60 characters.</td></tr>
+<tr><td>Meta descriptions</td><td>Missing; duplicate; shorter than 70 characters; longer than 160 characters.</td></tr>
+<tr><td>Content and headings</td><td>Exact duplicate content; missing H1; multiple H1s; fewer than 300 extracted words.</td></tr>
+<tr><td>Indexing signals</td><td>Missing canonical; canonical pointing elsewhere; noindex directive.</td></tr>
+</tbody></table></div>
+<p>Exact duplicate detection normalizes Unicode, letter case and whitespace, then compares text from successful pages with at least 100 words. Detected content-area text is preferred, otherwise full-page text is used; matching requires the same text source. It does not calculate near-duplicate similarity and cannot find pages outside the audit.</p>
+<p>A noindex directive may be intentional. Likewise, multiple H1s, canonical targets and short content need human context before changes are made. Thin-content checks prefer the content-area word count and otherwise use the full-page count.</p></section>
+      <section class="docs-section" id="exports" aria-labelledby="exports-title"><h2 id="exports-title">Exporting results</h2>
+<p>The Export menu offers a multi-sheet Excel workbook and separate Pages, All Links, Resources, SEO Issues and Content Area CSV files. The workbook contains overview, links, issues, resources and per-page detail sheets. Exports use the currently loaded audit, including a saved audit restored from History.</p>
+<p>Exports represent the available audit data, not just the visible table page or selected UI filter. Wait for completion if you need a final report. Export endpoints require a signed-in session and the server-issued dashboard session ID; copied download URLs are not public sharing links.</p>
+<p>Keep exported reports in an appropriate location: targets, extracted text and link details can be sensitive even though this documentation is public.</p></section>
+      <section class="docs-section" id="history" aria-labelledby="history-title"><h2 id="history-title">Saved history & database storage</h2>
+<p>MySQL persistence is optional. Without configured database credentials, the app can crawl in memory, but it cannot provide durable saved history. With MySQL enabled, runs and page results are written as the crawl progresses.</p>
+<div class="table-scroll"><table><caption>What is retained</caption><thead><tr><th>Data</th><th>Persistence</th></tr></thead><tbody>
+<tr><td>Run information</td><td>Starting URL, configuration summary, status, timestamps, statistics and engine information.</td></tr>
+<tr><td>Audited pages</td><td>SEO metadata, headings, word/image counts, extracted full-page and content-area text, content detection details, resource metadata and rendering comparison metrics.</td></tr>
+<tr><td>Links</td><td>Source and destination, anchors, classifications, status and redirect information.</td></tr>
+<tr><td>Security activity</td><td>Recorded security events, including IP address, user agent and relevant event metadata, when database storage is available.</td></tr>
+<tr><td>Not retained as an archive</td><td>Raw source/rendered HTML, asset files, screenshots, the unfinished crawl queue, every original configuration detail, or in-memory sign-in/dashboard sessions.</td></tr>
+</tbody></table></div>
+<h3>Opening a saved crawl</h3><p>Choose History, then View for a run. Its stored results load into the main dashboard so you can inspect pages, links, resources, content, issues and exports. Stop the current crawl first; a paused run still counts as active. Restoring history is a read-only review of saved results, not resuming its unfinished queue.</p>
+<p>Older runs can only show fields that were saved at the time. New storage support cannot recover data never retained. Database write failures are logged and may leave partial history even while an in-memory crawl continues successfully.</p>
+<h3>Clearing and retaining data</h3><p>Clear / Reset affects the working dashboard. The admin’s separate clear-history action deletes all saved crawl runs, pages and links after the required confirmation. It preserves the schema and security-event records, and is blocked while crawls or pending writes are active. There is no in-app undo.</p>
+<p>History is shared within this private admin workspace, not a separate archive for each person. There is no automatic age-based history or security-event cleanup. The History list initially requests the latest 25 runs; a listing limit does not mean older database records were deleted.</p>
+<p>The database layer creates missing tables and adds supported missing columns at startup without intentionally dropping existing history. Operator-managed backups and restore procedures remain separate from the app. Test a backup restore independently; a successful crawl does not verify backup recoverability.</p></section>
+      <section class="docs-section" id="sessions" aria-labelledby="sessions-title"><h2 id="sessions-title">Live updates & simultaneous crawls</h2>
+<p>Each dashboard tab obtains a server-issued session bound to its signed-in admin session. Queues, results, controls and exports belong to that dashboard session. Refreshing normally reconnects to it while server memory remains available. This is not a durable job queue across deployments.</p>
+<p>The default capacity is three simultaneous crawls with one asynchronous page worker each. On the managed Linux configuration, active crawls share a Chromium process but use separate page contexts. Contexts are closed after extraction; cookies are not a persistent login session across the entire audit. More workers and larger audits increase memory, CPU and outbound request load.</p>
+<p>The dashboard receives live events over Server-Sent Events (SSE). It takes an initial snapshot, applies revision-ordered updates and resynchronizes after commands, reconnects and completion. Server heartbeats arrive about every 10 seconds. If the stream stalls for about 25 seconds, a two-second snapshot fallback keeps it updated without overlapping requests. Healthy streaming does not continually poll full results.</p>
+<p>Pause stops scheduling new work; work already in progress may settle. Abort cancels the active run and closes its work as cleanup permits. Do not interpret a short cleanup delay as a new crawl. Starting another run, clearing results or restoring history resynchronizes the display to avoid mixing old updates with new state.</p>
+<p>A process restart or deployment loses in-memory sessions and unfinished queues. Saved database records remain, but an interrupted run can retain a “running” status if it could not write its final update.</p></section>
+      <section class="docs-section" id="security" aria-labelledby="security-title"><h2 id="security-title">Private access & administration</h2>
+<p>The homepage, this documentation, About, Privacy, Terms and Acceptable Use are public. The dashboard at <code>/app</code>, administration, crawler API and exports require authentication. Protected routes also send noindex directives. Robots exclusions are advisory; authentication is the access control.</p>
+<p>The current access model is one shared administrator credential, not individual accounts or roles. Anyone entrusted with that credential can access administrative features and shared saved history. Use a strong password and a separately generated signing secret.</p>
+<ul><li>Signed authentication cookies use HttpOnly and SameSite=Strict, with Secure handling on secure/production requests. Admin sessions expire after eight hours.</li><li>Login failures are limited to five attempts per IP in a 15-minute window. There is currently no crawl-start frequency limit; concurrency and workload ceilings still apply.</li><li>Origin checks guard state-changing requests when an Origin header is supplied. A strict Content Security Policy and other response headers apply; the legacy page has a narrower styling exception.</li><li>Input validation bounds crawl settings, patterns and request sizes. Outbound network policy rejects unsafe targets and checks addresses and redirects to reduce server-side request forgery risk.</li></ul>
+<p>These controls reduce risk; they are not a claim of complete security or an independent penetration test. Keep dependencies and deployment configuration maintained. Do not use the legacy interface as an authentication compatibility guarantee.</p>
+<h3>Admin tools</h3><p>The database overview reports stored counts and size information. Sessions shows recent/active dashboard and sign-in activity, including full IP addresses and browser information. Revoke unfamiliar sessions to remove access; revoking a dashboard session stops its crawl. An IP address is a network clue, not reliable proof of a unique person or physical device.</p>
+<p>Session activity is held in memory, capped at 100 records and retained for up to seven days; “active” means recently seen, roughly within two minutes. Security events can persist separately in MySQL. The admin event view shows recent entries rather than automatically deleting older records.</p></section>
+      <section class="docs-section" id="development" aria-labelledby="development-title"><h2 id="development-title">Local setup & development</h2>
+<p>Requirements: Node.js <strong>22.17.0 or newer</strong>, npm and a supported Chromium runtime. MySQL is optional for local development. Run commands from the repository root.</p>
+<pre><code>npm ci
+npx playwright-core install chromium
+npm run client:build</code></pre>
+<p>Provide <code>ADMIN_PASSWORD</code> and <code>ADMIN_SESSION_SECRET</code> through your environment. For a local file, create <code>.tmp/local.env</code> in your editor; <code>.tmp/</code> is ignored by Git. Replace the placeholders with private values. Do not put credentials under <code>src/public/</code> or in client-side configuration.</p>
+<pre><code>ADMIN_PASSWORD=replace-with-your-local-password
+ADMIN_SESSION_SECRET=replace-with-a-long-random-secret
+PUBLIC_APP_URL=http://localhost:3000</code></pre>
+<p>One way to generate a random secret locally is:</p>
+<pre><code>node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"</code></pre>
+<p>Start Express with explicit environment-file loading:</p>
+<pre><code>node --env-file=.tmp/local.env server.js</code></pre>
+<p>Open <code>http://localhost:3000/</code> for the public homepage, <code>/app</code> for the dashboard, <code>/admin</code> for administration and <code>/docs</code> for this guide. The standard <code>npm start</code> command uses existing process environment variables; it does not automatically read a .env file.</p>
+<div class="table-scroll"><table><caption>Development commands</caption><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>npm start</code></td><td>Start Express with an already configured environment.</td></tr>
+<tr><td><code>npm run dev</code></td><td>Watch and restart the Node server; does not rebuild React.</td></tr>
+<tr><td><code>npm run typecheck</code></td><td>Check TypeScript without emitting files.</td></tr>
+<tr><td><code>npm run client:build</code></td><td>Type-check and build React into <code>src/public/next/</code>.</td></tr>
+<tr><td><code>npm run client:dev</code></td><td>Vite UI development server. There is currently no API proxy configured; it is not a complete authenticated replacement for Express at port 3000.</td></tr>
+<tr><td><code>npm test</code></td><td>Feature, live-state, shared SEO-rule and public-documentation/access-boundary regression tests.</td></tr>
+<tr><td><code>npm run test:docs</code></td><td>Run the public documentation and protected-route checks on a temporary local server with database storage disabled.</td></tr>
+</tbody></table></div>
+<p>For integrated UI/API testing, rebuild the client and use Express at <code>/app</code>. Backend auto-reload does not refresh a stale compiled client bundle. The application rejects private-network crawl targets by design; do not remove that protection merely to audit localhost fixtures.</p></section>
+      <section class="docs-section" id="deployment" aria-labelledby="deployment-title"><h2 id="deployment-title">Deployment & environment reference</h2>
+<p>The repository’s current Hostinger workflow serves Express and committed React build output. GitHub pushes to the connected deployment branch trigger deployment; local commits alone do not. Build and test before an agreed batch push. Documentation becomes publicly available on the hosted site only after that version is deployed.</p>
+<p>Use Node 22.17.0 or newer, entry file <code>server.js</code> and start command <code>npm start</code>. The committed client bundle means production does not need to run Vite on every deployment. Dependencies must still be installed from the lockfile. If the deployment is changed to build the client remotely, it also needs development dependencies.</p>
+<div class="table-scroll"><table><caption>Environment variables (names and defaults, never credentials)</caption><thead><tr><th>Variable</th><th>Default / purpose</th></tr></thead><tbody>
+<tr><td><code>ADMIN_PASSWORD</code></td><td>Required private password; no usable default.</td></tr>
+<tr><td><code>ADMIN_SESSION_SECRET</code></td><td>Required private signing secret; use a long random value.</td></tr>
+<tr><td><code>PORT</code></td><td>3000 unless supplied by the host.</td></tr>
+<tr><td><code>NODE_ENV</code></td><td>Use production in the hosted environment; test HTTPS and cookie behaviour through the actual proxy.</td></tr>
+<tr><td><code>PUBLIC_APP_URL</code></td><td>Public origin used for robots/sitemap generation; repository default is the current product domain. Static canonical metadata must also be updated if the domain changes.</td></tr>
+<tr><td><code>DB_HOST</code>, <code>DB_NAME</code>, <code>DB_USER</code>, <code>DB_PASSWORD</code></td><td>All four enable optional MySQL persistence. Supply through private host environment settings.</td></tr>
+<tr><td><code>DB_PORT</code></td><td>3306.</td></tr>
+<tr><td><code>CHROMIUM_ENGINE</code></td><td>Linux prefers Sparticuz, other platforms Playwright. <code>sparticuz-only</code> prevents a Playwright fallback attempt; <code>playwright</code> selects Playwright.</td></tr>
+<tr><td><code>CHROMIUM_SINGLE_PROCESS</code></td><td>Opt-in with <code>true</code>; leave unset unless diagnosing a specific runtime requirement.</td></tr>
+<tr><td><code>MAX_CONCURRENT_CRAWLS</code></td><td>3; allowed 1–8.</td></tr>
+<tr><td><code>MAX_WORKERS_PER_CRAWL</code></td><td>1; allowed 1–3.</td></tr>
+<tr><td><code>MAX_UNLIMITED_CRAWL_PAGES</code></td><td>50,000; allowed 1,000–250,000. Safety ceiling, not a memory guarantee.</td></tr>
+<tr><td><code>LINK_CHECK_CONCURRENCY</code></td><td>6; allowed 1–12.</td></tr>
+<tr><td><code>LINK_CHECK_DEADLINE_MS</code></td><td>30,000; allowed 5,000–120,000.</td></tr>
+<tr><td><code>APP_RELEASE</code></td><td>Optional runtime release label.</td></tr>
+</tbody></table></div>
+<p>Keep concurrency conservative and observe memory, CPU, latency and browser failures under simultaneous load. A free crawl slot means capacity is available according to the configured limit, not that the host has unlimited resources. Sparticuz avoids many missing desktop-library problems but startup still depends on host compatibility.</p>
+<p>The authenticated <code>/api/debug/browser</code> endpoint helps diagnose browser launch failures. It starts/checks the browser and should not be treated as a cheap public health probe. Database backups, hosting retention and restoration are operator-managed outside this app.</p></section>
+      <section class="docs-section" id="architecture" aria-labelledby="architecture-title"><h2 id="architecture-title">Code map & API reference</h2>
+<div class="table-scroll"><table><caption>Where to make changes</caption><thead><tr><th>Location</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td><code>server.js</code></td><td>Express routes, authentication, dashboard sessions, live streams, capacity and exports.</td></tr>
+<tr><td><code>src/client/</code></td><td>React dashboard, typed API client and domain types; feature folders for pages, links, resources, issues, content, history and live crawl state.</td></tr>
+<tr><td><code>src/engine/</code></td><td>Crawl queue, browser lifecycle, extraction, robots handling, geography hints, link checks and report generation.</td></tr>
+<tr><td><code>src/shared/seoIssues.js</code></td><td>Browser-safe rules shared by dashboard and server exports.</td></tr>
+<tr><td><code>src/security/</code></td><td>Crawl request validation and outbound network policy.</td></tr>
+<tr><td><code>src/storage/database.js</code></td><td>Optional MySQL schema initialization, serialized writes, retrieval and administration.</td></tr>
+<tr><td><code>src/public/</code></td><td>Public pages and documentation, compiled React output under next, plus legacy static assets.</td></tr>
+<tr><td><code>src/admin/</code></td><td>Login and administrative UI, served through explicit server routes.</td></tr>
+</tbody></table></div>
+<p>The React dashboard is the supported interface at <code>/app</code>. <code>/next/</code> is its protected asset path, not a separate migration product. <code>/legacy</code> retains the older implementation; its old session/bootstrap code should not be assumed compatible with the current server.</p>
+<h3>Authenticated API families</h3><p>This is the app’s internal same-origin API, not a public API-key service. Obtain a sign-in cookie through login, then create a dashboard session with <code>POST /api/crawler/session</code>. Crawler and export requests carry the returned <code>sessionId</code>; it is bound to the authenticated session, not a standalone access token. See <code>src/client/api/crawler-client.ts</code> and <code>src/client/types/crawl.ts</code> for request/response contracts.</p>
+<div class="table-scroll"><table><caption>Primary endpoints</caption><thead><tr><th>Method and path</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>GET /api/admin/session</code><br><code>POST /api/admin/login</code><br><code>POST /api/admin/logout</code></td><td>Check access configuration/sign-in state, sign in, sign out. Status and login are available before authentication; administrative data is not.</td></tr>
+<tr><td><code>POST /api/crawler/session</code></td><td>Create or reconnect a server-issued dashboard session.</td></tr>
+<tr><td><code>POST /api/crawler/start</code></td><td>Validate a CrawlConfig and start an audit if capacity permits.</td></tr>
+<tr><td><code>POST /api/crawler/pause</code><br><code>POST /api/crawler/resume</code><br><code>POST /api/crawler/stop</code><br><code>POST /api/crawler/reset</code></td><td>Control the current dashboard’s crawl.</td></tr>
+<tr><td><code>GET /api/crawler/snapshot</code><br><code>GET /api/crawler/stream</code></td><td>Atomic state/results/links/revision snapshot and SSE updates.</td></tr>
+<tr><td><code>GET /api/crawler/status</code><br><code>GET /api/crawler/results</code><br><code>GET /api/crawler/links</code></td><td>Individual status and result endpoints.</td></tr>
+<tr><td><code>GET /api/crawler/page-html?url=…</code></td><td>On-demand source/rendered capture for a URL in the current audit while idle.</td></tr>
+<tr><td><code>GET /api/crawler/history</code><br><code>GET /api/crawler/history/:crawlId</code><br><code>POST /api/crawler/history/:crawlId/restore</code></td><td>List, read and load saved audit data.</td></tr>
+<tr><td><code>GET /api/export/workbook.xlsx</code><br><code>GET /api/export/pages.csv</code><br><code>GET /api/export/links.csv</code><br><code>GET /api/export/resources.csv</code><br><code>GET /api/export/issues.csv</code><br><code>GET /api/export/custom-content.csv</code></td><td>Export current results; sessionId is required.</td></tr>
+<tr><td><code>GET /api/admin/database-overview</code><br><code>GET /api/admin/security-events</code><br><code>GET /api/admin/sessions</code></td><td>Private operational information.</td></tr>
+<tr><td><code>POST /api/admin/sessions/:sessionId/revoke</code><br><code>POST /api/admin/crawl-history/clear</code></td><td>Revoke access or perform confirmed deletion. History deletion requires <code>confirmation: "DELETE ALL"</code>.</td></tr>
+</tbody></table></div>
+<p>Schema tables are <code>crawl_runs</code>, <code>crawl_pages</code>, <code>crawl_links</code> and <code>security_events</code>. Page and link persistence uses transactions with ordered pending writes. Active crawl state remains in process memory rather than a database-backed scheduler.</p></section>
+      <section class="docs-section" id="troubleshooting" aria-labelledby="troubleshooting-title"><h2 id="troubleshooting-title">Troubleshooting & known boundaries</h2>
+<dl><dt>Only one page is audited</dt><dd>Check Single URL scope, page limit 1 and depth 0 first. Then inspect discovered links, redirects, exclusions, robots rules and whether the engine fell back to non-rendered HTML.</dd>
+<dt>Content exists, but the content-area badge says missing</dt><dd>Content extraction and identifying a main block are separate. Review full-page text, rendering status and the selector. Short pages may not pass the automatic heuristic.</dd>
+<dt>The dashboard appears stuck at “Starting engine”</dt><dd>Check authentication expiry, the snapshot and stream requests in browser developer tools, and runtime logs. The live controller resynchronizes after commands and reconnects; repeated stalls need the failing request/error, not repeated starts.</dd>
+<dt>Localhost shows an old interface</dt><dd>The public homepage is now at /. Use /app for React, rebuild with npm run client:build, and restart Express if server routes changed. Vite development and Express are separate processes.</dd>
+<dt>History is unavailable or incomplete</dt><dd>Check database configuration and runtime persistence errors. In-memory results are not proof of a successful database write. Older records may lack fields introduced later.</dd>
+<dt>Internal link redirects seem different from page status</dt><dd>The link record describes the original request and redirect chain. The audited page may describe the final successful destination. Compare the fields rather than only the displayed URL.</dd>
+<dt>Resources say blocked or have no HTTP status</dt><dd>Some resource types are intentionally blocked to save bandwidth. Declared but unrequested resources can have unknown status. Neither is automatically a 404.</dd>
+<dt>A site returns 403 or region-specific content</dt><dd>The target can restrict hosting-provider traffic. Browser region presets do not change the public egress IP. Do not treat these presets as a VPN or bypass.</dd>
+<dt>A large audit slows down</dt><dd>Lower concurrency and scope, inspect hosting memory, and keep bounded page/depth limits. UI pagination does not eliminate server/client memory use for the complete dataset.</dd></dl>
+<p>Not currently provided: durable pause/resume across restarts, individual user roles, permanent raw HTML/asset archives, near-duplicate similarity analysis, guaranteed full SPA readiness, or a full replacement for every desktop crawler capability.</p>
+<p>This guide describes the repository revision reviewed on <time datetime="2026-09-05">5 September 2026</time>. Keep it updated whenever configuration defaults, authentication, storage fields, UI behaviour or API contracts change. Use your browser’s Print command to save a PDF copy.</p></section>
+    </main>
+  </div>
+  <footer class="site-footer"><span>© 2026 CrawlLoom</span><nav class="site-nav" aria-label="Footer"><a href="/">Home</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable use</a></nav></footer>
+</body>
+</html>
