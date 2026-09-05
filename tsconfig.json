@@ -4,7 +4,7 @@
     "skipLibCheck": true, "esModuleInterop": true, "allowSyntheticDefaultImports": true,
     "strict": true, "forceConsistentCasingInFileNames": true, "module": "ESNext",
     "moduleResolution": "Bundler", "resolveJsonModule": true, "isolatedModules": true,
-    "noEmit": true, "jsx": "react-jsx"
+    "noEmit": true, "jsx": "react-jsx", "allowJs": true
   },
-  "include": ["src/client"]
+  "include": ["src/client", "src/shared"]
 }

@@ -68,6 +68,7 @@ Express server
 | `src/engine/robots.js` | `robots.txt` parser and origin fetcher |
 | `src/engine/geoPresets.js` | Regional browser locale, timezone, coordinates, and request-header presets |
 | `src/engine/exporter.js` | CSV and XLSX report generation |
+| `src/shared/seoIssues.js` | Shared SEO issue definitions and evaluation for the React dashboard and CSV/XLSX reports |
 | `src/storage/database.js` | Optional MySQL schema, persistence, and saved-crawl retrieval |
 | `src/public/` | Dashboard HTML, JavaScript, and styles |
 
