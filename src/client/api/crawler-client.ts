@@ -1,4 +1,4 @@
-import type { CrawlConfig, CrawlerStatus, CrawlPage, CrawledLink, CrawlHistoryDetail, CrawlHistoryRecord, HtmlComparisonCapture } from '../types/crawl';
+import type { CrawlConfig, CrawlerStatus, CrawlerSnapshot, CrawlPage, CrawledLink, CrawlHistoryDetail, CrawlHistoryRecord, HtmlComparisonCapture } from '../types/crawl';
 
 // The browser retains only a server-issued opaque ID. The API verifies that ID
 // belongs to the currently signed-in administrator before serving crawl data.
@@ -16,6 +16,7 @@ async function ensureDashboardSession(): Promise<string> {
   sessionPromise = (async () => {
     const response = await fetch('/api/crawler/session', {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       headers: {
         'Content-Type': 'application/json',
         ...(dashboardSessionId ? { 'X-Crawler-Session': dashboardSessionId } : {})
@@ -63,6 +64,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const crawlerClient = {
   ready: () => ensureDashboardSession(),
+  snapshot: (signal?: AbortSignal) => request<CrawlerSnapshot>('/api/crawler/snapshot', {
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000)
+  }),
   status: () => request<CrawlerStatus>('/api/crawler/status'),
   results: () => request<{ results: CrawlPage[] }>('/api/crawler/results'),
   links: () => request<{ links: CrawledLink[] }>('/api/crawler/links'),

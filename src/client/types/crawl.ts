@@ -145,6 +145,12 @@ export interface CrawlerStatus {
   capacity?: CrawlCapacity;
 }
 
+export interface CrawlerSnapshot extends CrawlerStatus {
+  revision: number;
+  results: CrawlPage[];
+  links: CrawledLink[];
+}
+
 export interface CrawlHistoryRecord {
   id: string;
   seedUrl: string;

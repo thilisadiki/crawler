@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node test-features.js",
+    "test": "node test-features.js && npm run test:live",
+    "test:live": "node --experimental-strip-types --test test-live-crawler.js",
     "client:dev": "vite --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "client:build": "npm run typecheck && vite build",

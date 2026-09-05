@@ -568,7 +568,9 @@ app.use('/api/export', requireAdmin, requireDashboardSession);
 function broadcastSSE(sessionId, eventType, data) {
   const record = crawlerSessions.get(sessionId);
   if (record) record.updatedAt = Date.now();
-  const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  const session = dashboardSessions.get(sessionId);
+  if (session) session.eventRevision = (session.eventRevision || 0) + 1;
+  const payload = `event: ${eventType}\ndata: ${JSON.stringify({ ...data, revision: session?.eventRevision || 0 })}\n\n`;
   sseClients.filter(client => client.sessionId === sessionId).forEach(client => {
     try {
       client.res.write(payload);
@@ -598,22 +600,47 @@ app.get('/api/crawler/stream', (req, res) => {
   const newClient = { sessionId, res };
   sseClients.push(newClient);
 
-  if (crawler) {
-    res.write(`event: status\ndata: ${JSON.stringify({
-      isRunning: crawler.isRunning,
-      isPaused: crawler.isPaused,
-      isStopping: crawler.isCancelled,
-      stats: crawler.stats,
-      queueLength: crawler.queue.length,
-      config: crawler.getConfigSummary(),
-      engine: crawler.getEngineStatus(),
-      capacity: getCrawlCapacity()
-    })}\n\n`);
-  }
+  res.write(`event: status\ndata: ${JSON.stringify(getDashboardStatus(sessionId, crawler))}\n\n`);
 
-  req.on('close', () => {
+  // Named events (not SSE comments) let the client detect proxy buffering as
+  // well as broken connections. Re-check authentication on long-lived streams.
+  const heartbeat = setInterval(() => {
+    const session = dashboardSessions.get(sessionId);
+    const admin = getAdminSession(req, false);
+    if (!session || session.revokedAt || !admin || session.ownerAdminSessionId !== admin.id) {
+      res.write(`event: revoked\ndata: ${JSON.stringify({ message: 'Your dashboard session is no longer active. Please sign in again.' })}\n\n`);
+      res.end();
+      return;
+    }
+    session.lastSeenAt = Date.now();
+    res.write(`event: heartbeat\ndata: ${JSON.stringify({ capacity: getCrawlCapacity() })}\n\n`);
+  }, 10000);
+
+  res.on('close', () => {
+    clearInterval(heartbeat);
     sseClients = sseClients.filter(client => client !== newClient);
   });
+});
+
+function getDashboardStatus(sessionId, crawler) {
+  return {
+    revision: dashboardSessions.get(sessionId)?.eventRevision || 0,
+    isRunning: crawler?.isRunning || false,
+    isPaused: crawler?.isPaused || false,
+    isStopping: crawler?.isCancelled || false,
+    stats: crawler?.stats || null,
+    queueLength: crawler?.queue.length || 0,
+    config: crawler?.getConfigSummary() || null,
+    engine: crawler?.getEngineStatus() || null,
+    capacity: getCrawlCapacity()
+  };
+}
+
+// One synchronous snapshot keeps status, pages, links and event revision in
+// agreement. Existing individual endpoints remain available for the legacy UI.
+app.get('/api/crawler/snapshot', (req, res) => {
+  const { sessionId, crawler } = getSessionCrawler(req);
+  res.json({ ...getDashboardStatus(sessionId, crawler), results: crawler?.results || [], links: crawler?.allLinks || [] });
 });
 
 // Start Crawl
@@ -730,8 +757,11 @@ app.post('/api/crawler/start', async (req, res) => {
       }));
     });
     crawler.on('engineSelected', data => sendCrawlerEvent('engineSelected', data));
+    let publishedLinkCount = 0;
     crawler.on('pageCrawled', data => {
-      sendCrawlerEvent('pageCrawled', data);
+      const links = crawler.allLinks.slice(publishedLinkCount);
+      publishedLinkCount = crawler.allLinks.length;
+      sendCrawlerEvent('pageCrawled', { ...data, links });
       queuePersistence(() => crawlStorage.savePage(crawlId, data.result));
     });
     crawler.on('paused', () => {

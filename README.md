@@ -326,6 +326,7 @@ Responses:
 | Route | Description |
 | --- | --- |
 | `GET /api/crawler/status?sessionId=<id>` | Session status, statistics, engine mode, runtime release, and global capacity. |
+| `GET /api/crawler/snapshot?sessionId=<id>` | Consistent status, pages, canonical links and event revision for the authenticated dashboard session. |
 | `GET /api/crawler/results?sessionId=<id>` | Crawled page results. |
 | `GET /api/crawler/links?sessionId=<id>` | Aggregated link records. |
 | `GET /api/crawler/history?limit=25` | Saved crawls from MySQL; survives restarts and deployments. |
@@ -344,6 +345,23 @@ Responses:
 | `paused`, `resumed`, `stopping`, `stopped`, `completed`, `reset` | Session lifecycle changes. `stopping` means active browser/network work is being cancelled; `stopped` is emitted after cleanup completes. |
 | `error` | Crawl-level error. |
 | `capacity` | Global crawl capacity changed. |
+| `heartbeat` | Connection liveness and current capacity, sent every 10 seconds. |
+| `restored` | Saved history was restored into the dashboard session. |
+| `revoked` | Access ended; the dashboard closes its stream and clears displayed results. |
+
+The React dashboard uses `src/client/features/crawl/liveCrawler.ts` to coordinate
+live updates. Healthy connections receive incremental pages, links and control
+events without periodically downloading the complete audit. A full snapshot is
+loaded on connection/reconnection, after commands (including history restoration),
+and on completion or stopping. A disconnected stream, or one with no messages for
+25 seconds, activates a two-second fallback check with at most one pending snapshot.
+Once live updates resume, routine fallback reads stop. Failed snapshot reads are
+also retried so a healthy stream cannot leave the initial results incomplete.
+
+Per-session event revisions reconcile messages received while a snapshot loads.
+Commands invalidate earlier requests and close the old stream, preventing delayed
+responses from overwriting a newly started or cleared audit. `npm run test:live`
+checks these timing scenarios without crawling an external website.
 
 ## Exports
 

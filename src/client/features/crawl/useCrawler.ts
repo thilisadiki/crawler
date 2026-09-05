@@ -1,109 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { crawlerClient } from '../../api/crawler-client';
-import type { CrawlCapacity, CrawlConfig, CrawlPage, CrawlState, CrawlStats, CrawledLink, EngineStatus } from '../../types/crawl';
-
-const EMPTY_STATS: CrawlStats = { pagesCrawled: 0, pagesQueued: 0, internalLinksCount: 0, externalLinksCount: 0, errorsCount: 0, customDetectedCount: 0 };
-
-function deriveState(status: { isRunning?: boolean; isPaused?: boolean; isStopping?: boolean; stats?: CrawlStats | null }): CrawlState {
-  if (status.isRunning) return status.isStopping ? 'stopping' : status.isPaused ? 'paused' : 'running';
-  return status.stats ? 'completed' : 'ready';
-}
+import type { CrawlConfig } from '../../types/crawl';
+import { LiveCrawler, POLL_INTERVAL_MS } from './liveCrawler';
 
 export function useCrawler() {
-  const [state, setState] = useState<CrawlState>('ready');
-  const [stats, setStats] = useState<CrawlStats>(EMPTY_STATS);
-  const [queueLength, setQueueLength] = useState(0);
-  const [pages, setPages] = useState<CrawlPage[]>([]);
-  const [links, setLinks] = useState<CrawledLink[]>([]);
-  const [engine, setEngine] = useState<EngineStatus | null>(null);
-  const [capacity, setCapacity] = useState<CrawlCapacity | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
-
-  const sync = useCallback(async () => {
-    const [status, resultPayload, linkPayload] = await Promise.all([crawlerClient.status(), crawlerClient.results(), crawlerClient.links()]);
-    setState(deriveState(status));
-    setStats(status.stats || EMPTY_STATS);
-    setQueueLength(status.queueLength || 0);
-    setEngine(status.engine || null);
-    setCapacity(status.capacity);
-    setPages(resultPayload.results || []);
-    setLinks(linkPayload.links || []);
-  }, []);
+  const [live] = useState(() => new LiveCrawler(crawlerClient, url => new EventSource(url)));
+  const state = useSyncExternalStore(live.subscribe, live.getSnapshot);
 
   useEffect(() => {
-    let eventSource: EventSource | null = null;
-    let disposed = false;
-    const receiveStatus = (event: MessageEvent) => {
-      const data = JSON.parse(event.data);
-      setState(deriveState(data)); setStats(data.stats || EMPTY_STATS); setQueueLength(data.queueLength || 0);
-      setEngine(data.engine || null); setCapacity(data.capacity);
-    };
-    const receivePage = (event: MessageEvent) => {
-      const data = JSON.parse(event.data);
-      setPages(current => current.some(page => page.url === data.result.url) ? current : [...current, data.result]);
-      setLinks(current => {
-        const fresh = (data.result.links || []).map((link: CrawledLink) => ({ ...link, sourceUrl: data.result.url }));
-        const known = new Set(current.map(link => `${link.sourceUrl}|${link.targetUrl || link.url}|${link.anchorText || ''}`));
-        return [...current, ...fresh.filter((link: CrawledLink) => !known.has(`${link.sourceUrl}|${link.targetUrl || link.url}|${link.anchorText || ''}`))];
-      });
-      setStats(data.stats || EMPTY_STATS); setQueueLength(data.queueLength || 0);
-    };
-    const receiveReset = () => { setState('ready'); setStats(EMPTY_STATS); setQueueLength(0); setPages([]); setLinks([]); setEngine(null); setError(null); };
-    const poller = window.setInterval(() => void sync().catch(() => {}), 2000);
-    // Create the server-issued tab session before starting the event stream.
-    // Hostinger proxies can temporarily buffer SSE, so polling remains a fallback.
-    void (async () => {
-      try {
-        await crawlerClient.ready();
-        if (disposed) return;
-        await sync();
-        if (disposed) return;
-        eventSource = new EventSource(await crawlerClient.streamUrl());
-        eventSource.addEventListener('status', receiveStatus);
-        eventSource.addEventListener('pageCrawled', receivePage);
-        eventSource.addEventListener('capacity', event => setCapacity(JSON.parse((event as MessageEvent).data)));
-        eventSource.addEventListener('started', () => void sync());
-        eventSource.addEventListener('completed', () => void sync());
-        eventSource.addEventListener('stopped', () => void sync());
-        eventSource.addEventListener('revoked', () => {
-          setState('ready'); setError('This dashboard session was revoked by an administrator.');
-        });
-        eventSource.addEventListener('reset', receiveReset);
-      } catch (caught) {
-        if (!disposed) setError(caught instanceof Error ? caught.message : 'Could not establish a secure dashboard session.');
-      }
-    })();
-    return () => { disposed = true; eventSource?.close(); window.clearInterval(poller); };
-  }, [sync]);
+    live.start();
+    const timer = window.setInterval(live.tick, POLL_INTERVAL_MS);
+    return () => { window.clearInterval(timer); live.stop(); };
+  }, [live]);
 
   const run = useCallback(async (action: 'start' | 'pause' | 'resume' | 'stop' | 'reset', config?: CrawlConfig) => {
-    setError(null);
     try {
-      if (action === 'start' && config) {
-        setPages([]); setLinks([]); setStats(EMPTY_STATS); setQueueLength(0); setState('running');
-        await crawlerClient.start(config);
-      } else if (action === 'pause') await crawlerClient.pause();
-      else if (action === 'resume') await crawlerClient.resume();
-      else if (action === 'stop') await crawlerClient.stop();
-      else if (action === 'reset') await crawlerClient.reset();
-      await sync();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Crawler request failed.');
-      await sync().catch(() => {});
-    }
-  }, [sync]);
+      await live.command(async () => {
+        if (action === 'start') {
+          if (config) await crawlerClient.start(config);
+        } else await crawlerClient[action]();
+      }, action === 'start');
+    } catch { /* The controller exposes command errors in dashboard state. */ }
+  }, [live]);
 
-  const restoreHistory = useCallback(async (crawlId: string) => {
-    setError(null);
-    try {
-      const restored = await crawlerClient.restoreHistory(crawlId);
-      await sync();
-      return restored;
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not restore the saved crawl.');
-      throw caught;
-    }
-  }, [sync]);
-
-  return useMemo(() => ({ state, stats, queueLength, pages, links, engine, capacity, error, run, restoreHistory }), [state, stats, queueLength, pages, links, engine, capacity, error, run, restoreHistory]);
+  const restoreHistory = useCallback((crawlId: string) => live.command(() => crawlerClient.restoreHistory(crawlId)), [live]);
+  return { ...state, run, restoreHistory };
 }
