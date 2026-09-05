@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { CrawledLink } from '../../types/crawl';
+import './links.css';
 
 type LinkFilter = 'all' | 'internal' | 'external' | 'redirects' | 'in-content' | '200' | 'errors' | 'nofollow';
 type SortKey = 'index' | 'status' | 'anchor' | 'destination' | 'type' | 'content' | 'nofollow' | 'source';
@@ -72,13 +73,28 @@ export function LinksExplorer({ links, sharedSearch }: { links: CrawledLink[]; s
   const rows = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   function selectFilter(value: LinkFilter) { setFilter(value); setPage(1); }
   function changeSort(key: SortKey) { setSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' })); setPage(1); }
-  function header(label: string, key: SortKey) { return <th><button className="sort-button" onClick={() => changeSort(key)}>{label} <span>{sort.key === key ? (sort.direction === 'asc' ? '▲' : '▼') : '↕'}</span></button></th>; }
+  function header(label: string, key: SortKey) { return <th scope="col" aria-sort={sort.key === key ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}><button className="sort-button" onClick={() => changeSort(key)}>{label} <span>{sort.key === key ? (sort.direction === 'asc' ? '▲' : '▼') : '↕'}</span></button></th>; }
 
   const filters: Array<[LinkFilter, string]> = [['all', 'All links'], ['internal', 'Internal'], ['external', 'External'], ['redirects', 'Redirects'], ['in-content', 'In content area'], ['200', '200 OK'], ['errors', 'Errors & broken'], ['nofollow', 'Nofollow']];
   return <>
     <div className="sub-tabs" aria-label="Link filters">{filters.map(([value, label]) => <button key={value} className={filter === value ? 'pill active' : 'pill'} onClick={() => selectFilter(value)}>{label} ({counts[value]})</button>)}</div>
-    <div className="table-wrap"><table><thead><tr>{header('#', 'index')}{header('Status', 'status')}{header('Anchor text', 'anchor')}{header('Destination URL', 'destination')}{header('Type', 'type')}{header('Content area', 'content')}{header('Nofollow', 'nofollow')}{header('Source page', 'source')}<th /></tr></thead><tbody>
-      {rows.length ? rows.map(({ link }, index) => { const href = destination(link); const code = status(link); const redirects = redirectCount(link); return <tr key={`${link.sourceUrl}|${href}|${link.anchorText}|${index}`}><td>{(currentPage - 1) * pageSize + index + 1}</td><td><span className={code === 200 ? 'code success' : code >= 400 || code === 0 ? 'code failure' : 'code neutral'}>{link.statusCode ?? '—'}</span></td><td title={link.anchorText}>{link.anchorText || '[No Text]'}</td><td className="url" title={href}>{safeUrl(href) ? <a href={href} target="_blank" rel="noreferrer">{href}</a> : href || '—'}{redirects > 0 && <small className="redirect-destination">↳ {link.finalUrl || 'Redirect destination unavailable'} ({redirects} hop{redirects === 1 ? '' : 's'})</small>}</td><td><span className={isInternal(link) ? 'tag positive' : 'tag neutral'}>{link.linkType || 'Unknown'}</span></td><td>{link.isInsideCustom ? <span className="tag positive">Yes</span> : 'No'}</td><td>{link.isNofollow ? 'nofollow' : 'dofollow'}</td><td className="url" title={link.sourceUrl}>{link.sourceUrl || '—'}</td><td><button className="inspect" onClick={() => setSelected(link)}>Inspect</button></td></tr>; }) : <tr><td colSpan={9} className="empty">{links.length ? 'No links match the current search or filters.' : 'No links discovered yet. Run a crawl to extract on-page links.'}</td></tr>}
+    <div className="table-wrap links-table-wrap"><table className="links-table" aria-label="Discovered links and anchors">
+      <colgroup><col className="link-column-index" /><col className="link-column-status" /><col className="link-column-anchor" /><col className="link-column-destination" /><col className="link-column-type" /><col className="link-column-content" /><col className="link-column-nofollow" /><col className="link-column-source" /><col className="link-column-action" /></colgroup>
+      <thead><tr>{header('#', 'index')}{header('Status', 'status')}{header('Anchor text', 'anchor')}{header('Destination URL', 'destination')}{header('Type', 'type')}{header('Content area', 'content')}{header('Nofollow', 'nofollow')}{header('Source page', 'source')}<th scope="col">Action</th></tr></thead><tbody>
+      {rows.length ? rows.map(({ link }, index) => {
+        const href = destination(link); const code = status(link); const redirects = redirectCount(link);
+        return <tr key={`${link.sourceUrl}|${href}|${link.anchorText}|${index}`}>
+          <td data-label="#">{(currentPage - 1) * pageSize + index + 1}</td>
+          <td data-label="Status"><span className={code === 200 ? 'code success' : code >= 400 || code === 0 ? 'code failure' : 'code neutral'}>{link.statusCode ?? '—'}</span></td>
+          <td data-label="Anchor text">{link.anchorText || '[No Text]'}</td>
+          <td data-label="Destination URL" className="url"><div>{safeUrl(href) ? <a href={href} target="_blank" rel="noreferrer">{href}</a> : href || '—'}{redirects > 0 && <small className="redirect-destination">↳ {link.finalUrl || 'Redirect destination unavailable'} ({redirects} hop{redirects === 1 ? '' : 's'})</small>}</div></td>
+          <td data-label="Type"><span className={isInternal(link) ? 'tag positive' : 'tag neutral'}>{link.linkType || 'Unknown'}</span></td>
+          <td data-label="Content area">{link.isInsideCustom ? <span className="tag positive">Yes</span> : 'No'}</td>
+          <td data-label="Nofollow">{link.isNofollow ? 'nofollow' : 'dofollow'}</td>
+          <td data-label="Source page" className="url">{link.sourceUrl || '—'}</td>
+          <td data-label="Action"><button className="inspect" onClick={() => setSelected(link)}>Inspect</button></td>
+        </tr>;
+      }) : <tr><td colSpan={9} className="empty">{links.length ? 'No links match the current search or filters.' : 'No links discovered yet. Run a crawl to extract on-page links.'}</td></tr>}
     </tbody></table></div>
     {filtered.length > 0 && <div className="pagination"><span>Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filtered.length)} of {filtered.length.toLocaleString()}</span><label>Rows <select value={pageSize} onChange={event => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="50">50</option><option value="100">100</option><option value="250">250</option></select></label><button className="secondary" disabled={currentPage === 1} onClick={() => setPage(current => current - 1)}>Previous</button><span>Page {currentPage} of {totalPages}</span><button className="secondary" disabled={currentPage === totalPages} onClick={() => setPage(current => current + 1)}>Next</button></div>}
     {selected && <LinkInspector link={selected} onClose={() => setSelected(null)} />}

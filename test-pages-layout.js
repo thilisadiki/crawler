@@ -7,7 +7,7 @@ import test from 'node:test';
 import { BrowserManager } from './src/engine/browser.js';
 
 // Uses the compiled dashboard and synthetic API responses: no real crawl or DB.
-test('all Pages fields fit without horizontal scrolling', { timeout: 60000 }, async (t) => {
+test('all Pages and Links fields fit without horizontal scrolling', { timeout: 60000 }, async (t) => {
   const reservation = createServer().listen(0, '127.0.0.1');
   await once(reservation, 'listening');
   const port = reservation.address().port;
@@ -47,8 +47,16 @@ test('all Pages fields fit without horizontal scrolling', { timeout: 60000 }, as
     totalWords: 1200, responseTimeMs: 123456 + index, links: [],
     customContent: { detected: true, wordCount: 1200, fullText: longText, headings: [longText] }
   }));
+  const links = [200, 301, 404].map((code, index) => ({
+    targetUrl: `https://example.com/destination/${index}/${'long-destination-'.repeat(18)}`,
+    anchorText: `${index} ${longText}`, sourceUrl: results[0].url,
+    statusCode: code, linkType: code === 404 ? 'External' : 'Internal',
+    isInsideCustom: true, isNofollow: true,
+    ...(code === 301 ? { redirectCount: 1, finalStatusCode: 200,
+      finalUrl: `https://example.com/final/${'long-final-destination-'.repeat(15)}` } : {})
+  }));
   await page.route('**/api/crawler/snapshot?*', route => route.fulfill({ json: {
-    revision: 0, isRunning: false, results, links: [],
+    revision: 0, isRunning: false, results, links,
     stats: { pagesCrawled: 2, endTime: 1 }, engine: { mode: 'browser' }
   } }));
   await page.route('**/api/crawler/stream?*', route => route.abort());
@@ -110,5 +118,59 @@ test('all Pages fields fit without horizontal scrolling', { timeout: 60000 }, as
     await page.setViewportSize({ width: 390, height: 900 });
     await page.locator('.pages-table-wrap').scrollIntoViewIfNeeded();
     await page.screenshot({ path: '.tmp/pages-mobile.png' });
+  }
+
+  await page.locator('.explorer-tab').filter({ hasText: 'Discovered links & anchors' }).click();
+  for (const width of [1920, 1440, 1024, 860, 768, 390, 320]) {
+    await t.test(`all eight link filters fit at ${width}px`, async () => {
+      await page.setViewportSize({ width, height: 1000 });
+      for (let filter = 0; filter < 8; filter++) {
+        await page.locator('.sub-tabs button').nth(filter).click();
+        assert.equal(await page.locator('.sub-tabs button.active').count(), 1);
+        const issues = await page.locator('.links-table-wrap').evaluate(wrapper => {
+          const box = wrapper.getBoundingClientRect();
+          const cells = [...wrapper.querySelectorAll('tbody td')];
+          return {
+            overflow: wrapper.scrollWidth - wrapper.clientWidth,
+            fields: wrapper.querySelectorAll('tbody tr:first-child td').length,
+            clipped: cells.some(cell => cell.scrollWidth > cell.clientWidth + 1),
+            outside: cells.some(cell => {
+              const bounds = cell.getBoundingClientRect();
+              return bounds.left < box.left - 1 || bounds.right > box.right + 1;
+            }),
+            truncatedRedirect: [...wrapper.querySelectorAll('.redirect-destination')].some(el => el.scrollWidth > el.clientWidth + 1)
+          };
+        });
+        assert.ok(issues.overflow <= 1, `filter ${filter}: horizontal overflow`);
+        assert.equal(issues.fields, 9);
+        assert.equal(issues.clipped, false, `filter ${filter}: clipped text`);
+        assert.equal(issues.outside, false, `filter ${filter}: column outside panel`);
+        assert.equal(issues.truncatedRedirect, false);
+      }
+    });
+  }
+  await t.test('link sorting, search, empty states and inspection still work', async () => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.locator('.sub-tabs button').nth(0).click();
+    const anchorSort = page.locator('.links-table .sort-button').filter({ hasText: 'Anchor text' });
+    await anchorSort.click();
+    await anchorSort.click();
+    assert.ok((await page.locator('.links-table td[data-label="Anchor text"]').first().textContent()).startsWith('2'));
+    const search = page.getByPlaceholder('Search anchor text, URLs or status codes…');
+    await search.fill('/destination/1/');
+    assert.equal(await page.locator('.links-table tbody tr').count(), 1);
+    assert.ok((await page.locator('.redirect-destination').textContent()).includes(links[1].finalUrl));
+    await page.locator('.links-table .inspect').click();
+    assert.ok((await page.getByRole('dialog', { name: 'Discovered link details' }).textContent()).includes(links[1].finalUrl));
+    await page.getByRole('button', { name: 'Close inspection', exact: true }).click();
+    await search.fill('not-a-matching-link');
+    assert.match(await page.locator('.links-table .empty').textContent(), /No links match/);
+    await search.fill('');
+  });
+  if (process.env.LAYOUT_SCREENSHOTS === 'true') {
+    await page.locator('.links-table-wrap').screenshot({ path: '.tmp/links-desktop.png' });
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.locator('.links-table-wrap').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: '.tmp/links-mobile.png' });
   }
 });
