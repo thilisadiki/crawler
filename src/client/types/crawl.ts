@@ -123,6 +123,7 @@ export interface CrawlPage {
   responseTimeMs?: number | null;
   wordCount?: number;
   totalWords?: number;
+  imagesCount?: number | null;
   internalLinksCount?: number;
   externalLinksCount?: number;
   customLinksCount?: number;

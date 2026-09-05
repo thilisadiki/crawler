@@ -12,7 +12,8 @@
     "dev": "node --watch server.js",
     "test": "node test-features.js",
     "client:dev": "vite --host 0.0.0.0",
-    "client:build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "client:build": "npm run typecheck && vite build",
     "client:preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

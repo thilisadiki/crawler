@@ -11,7 +11,7 @@ function redirectToLogin() {
   window.location.assign(`/admin/login?next=${encodeURIComponent(next)}`);
 }
 
-async function ensureDashboardSession() {
+async function ensureDashboardSession(): Promise<string> {
   if (sessionPromise) return sessionPromise;
   sessionPromise = (async () => {
     const response = await fetch('/api/crawler/session', {
@@ -28,9 +28,10 @@ async function ensureDashboardSession() {
     }
     const body = await response.json().catch(() => ({ error: 'The server returned an invalid response.' }));
     if (!response.ok || typeof body.sessionId !== 'string') throw new Error(body.error || 'Could not establish a secure dashboard session.');
-    dashboardSessionId = body.sessionId;
-    sessionStorage.setItem(SESSION_KEY, dashboardSessionId);
-    return dashboardSessionId;
+    const sessionId: string = body.sessionId;
+    dashboardSessionId = sessionId;
+    sessionStorage.setItem(SESSION_KEY, sessionId);
+    return sessionId;
   })();
   try {
     return await sessionPromise;
