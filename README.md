@@ -25,10 +25,12 @@ npm run client:build
 Supply `ADMIN_PASSWORD` and `ADMIN_SESSION_SECRET` as private environment variables. For local development, create `.tmp/local.env` in your editor (the `.tmp/` directory is ignored by Git), using your own password and a long random signing secret. Do not commit credentials or place them in public/client files.
 
 ```sh
-node --env-file=.tmp/local.env server.js
+npm run start:local
 ```
 
 Alternatively, with variables already in the process environment, use `npm start`. This command does not automatically load a .env file.
+
+Use `npm run dev:local` for automatic server restarts with the same local credentials. Both local commands require `.tmp/local.env`; set `NODE_ENV=development` there for local HTTP. Keep the password and signing secret separate from production. Stop any existing server on port 3000 before starting another. React changes still require `npm run client:build`.
 
 Open [/app](http://localhost:3000/app) for the supported React dashboard. The root path is the public homepage, not the crawler UI.
 

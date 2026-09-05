@@ -128,10 +128,13 @@ PUBLIC_APP_URL=http://localhost:3000</code></pre>
 <p>One way to generate a random secret locally is:</p>
 <pre><code>node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"</code></pre>
 <p>Start Express with explicit environment-file loading:</p>
-<pre><code>node --env-file=.tmp/local.env server.js</code></pre>
+<pre><code>npm run start:local</code></pre>
+<p>Use <code>npm run dev:local</code> instead to watch for server changes. Both commands explicitly load the ignored local file; stop any existing server on port 3000 first. Include <code>NODE_ENV=development</code> in that file when using local HTTP, and keep these credentials separate from production.</p>
 <p>Open <code>http://localhost:3000/</code> for the public homepage, <code>/app</code> for the dashboard, <code>/admin</code> for administration and <code>/docs</code> for this guide. The standard <code>npm start</code> command uses existing process environment variables; it does not automatically read a .env file.</p>
 <div class="table-scroll"><table><caption>Development commands</caption><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>npm start</code></td><td>Start Express with an already configured environment.</td></tr>
+<tr><td><code>npm run start:local</code></td><td>Start Express using private credentials from <code>.tmp/local.env</code>.</td></tr>
+<tr><td><code>npm run dev:local</code></td><td>Load the same local file and watch for server changes; does not rebuild React.</td></tr>
 <tr><td><code>npm run dev</code></td><td>Watch and restart the Node server; does not rebuild React.</td></tr>
 <tr><td><code>npm run typecheck</code></td><td>Check TypeScript without emitting files.</td></tr>
 <tr><td><code>npm run client:build</code></td><td>Type-check and build React into <code>src/public/next/</code>.</td></tr>
