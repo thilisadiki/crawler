@@ -51,7 +51,9 @@ MySQL is optional locally. Set `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` an
 
 | Location | Responsibility |
 | --- | --- |
-| `server.js` | Routes, authentication, sessions, live events, capacity and exports |
+| `server.js` | Express composition, HTTP routes, security middleware and access control |
+| `src/services/crawl-coordinator.js` | Active crawl lifecycle, capacity, persistence checkpoints and crawler events |
+| `src/services/sse-hub.js` | Live Server-Sent Event connection transport |
 | `src/client/` | React UI, typed API client, domain types and feature modules |
 | `src/client/features/crawl/liveCrawler.ts` | Revision-aware snapshots, SSE and resilient fallback |
 | `src/engine/` | Queue, browser runtime, extraction, link verification and exports |

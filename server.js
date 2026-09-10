@@ -10,6 +10,8 @@ import { crawlStorage } from './src/storage/database.js';
 import { CrawlNetworkPolicy, UnsafeCrawlTargetError } from './src/security/network-policy.js';
 import { validateCrawlRequest, CrawlRequestValidationError } from './src/security/crawl-request-validation.js';
 import { GEO_PRESETS } from './src/engine/geoPresets.js';
+import { CrawlCoordinator } from './src/services/crawl-coordinator.js';
+import { SseHub } from './src/services/sse-hub.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,12 +104,22 @@ app.get('/acceptable-use', sendInformationPage('acceptable-use.html'));
 // Hostinger database environment variables are configured.
 crawlStorage.initialize().catch(() => {});
 
-const crawlerSessions = new Map();
 const dashboardSessions = new Map();
-const runningCrawlers = new Set();
-let sseClients = [];
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 const MAX_RETAINED_SESSIONS = 25;
+const sseHub = new SseHub();
+const crawlCoordinator = new CrawlCoordinator({
+  storage: crawlStorage,
+  capacity: {
+    maxConcurrentCrawls: MAX_CONCURRENT_CRAWLS,
+    maxWorkersPerCrawl: MAX_WORKERS_PER_CRAWL,
+    maxUnlimitedCrawlPages: MAX_UNLIMITED_CRAWL_PAGES,
+    linkCheckConcurrency: LINK_CHECK_CONCURRENCY,
+    linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
+  },
+  onEvent: broadcastSSE,
+  onCapacityChange: broadcastCapacity
+});
 
 function parseCookies(req) {
   return Object.fromEntries((req.headers.cookie || '').split(';').flatMap(part => {
@@ -516,7 +528,7 @@ app.post('/api/access/logout', requireDashboardUser, requireSameOrigin, async (r
   principal.session.endedAt = Date.now();
   for (const [dashboardId, dashboard] of dashboardSessions) {
     if (dashboard.ownerRole !== principal.role || dashboard.ownerSessionId !== principal.id) continue;
-    const crawlerRecord = crawlerSessions.get(dashboardId);
+    const crawlerRecord = crawlCoordinator.get(dashboardId);
     if (crawlerRecord?.crawler?.isRunning) {
       await crawlerRecord.crawler.pauseAndWait();
       await crawlStorage.updateCrawl(crawlerRecord.crawlId, {
@@ -615,7 +627,7 @@ app.get('/api/admin/crawl-history', requireAdmin, async (req, res) => {
 app.post('/api/admin/crawl-history/:crawlId/delete', requireAdmin, requireSameOrigin, async (req, res) => {
   const crawlId = req.params.crawlId;
   if (!/^[a-f0-9-]{36}$/i.test(crawlId)) return res.status(400).json({ error: 'Invalid crawl identifier.' });
-  const activeCrawl = [...crawlerSessions.values()].some(session => session.crawlId === crawlId && session.crawler?.isRunning);
+  const activeCrawl = crawlCoordinator.hasActiveCrawl(crawlId);
   if (activeCrawl) {
     auditSecurityEvent(req, 'crawl.history.delete', 'denied', { crawlIdSuffix: crawlId.slice(-4), reason: 'active-crawl' });
     return res.status(409).json({ error: 'Stop and allow this crawl to finish saving before deleting it.' });
@@ -636,7 +648,7 @@ app.post('/api/admin/crawl-history/:crawlId/delete', requireAdmin, requireSameOr
 
 app.post('/api/admin/crawl-history/clear', requireAdmin, requireSameOrigin, async (req, res) => {
   try {
-    if (runningCrawlers.size > 0) {
+    if (crawlCoordinator.getCapacity().activeCrawls > 0) {
       auditSecurityEvent(req, 'crawl.history.clear', 'denied', { reason: 'active-crawls' });
       return res.status(409).json({ error: 'Stop and allow all active crawls to finish saving before clearing history.' });
     }
@@ -742,16 +754,8 @@ function requireDashboardSession(req, res, next) {
 
 function getSessionCrawler(req) {
   const sessionId = req.dashboardSession?.id || getRequestedDashboardSessionId(req);
-  const record = crawlerSessions.get(sessionId);
-  if (record) record.updatedAt = Date.now();
+  const record = crawlCoordinator.get(sessionId);
   return { sessionId, crawler: record?.crawler || null };
-}
-
-function findCrawlerSessionId(crawler) {
-  for (const [sessionId, record] of crawlerSessions) {
-    if (record?.crawler === crawler) return sessionId;
-  }
-  return null;
 }
 
 // A crawl has exactly one controlling dashboard session. Moving it first
@@ -759,8 +763,7 @@ function findCrawlerSessionId(crawler) {
 // controls or receive a second copy of the live events.
 function moveCrawlerToDashboardSession(fromSessionId, toSessionId, record) {
   if (!record || fromSessionId === toSessionId) return;
-  crawlerSessions.delete(fromSessionId);
-  crawlerSessions.set(toSessionId, record);
+  crawlCoordinator.move(fromSessionId, toSessionId, record);
   revokeDashboardSession(fromSessionId);
 }
 
@@ -785,51 +788,19 @@ function revokeDashboardSession(sessionId) {
   const record = dashboardSessions.get(sessionId);
   if (!record) return false;
   record.revokedAt = Date.now();
-  const crawlerRecord = crawlerSessions.get(sessionId);
+  const crawlerRecord = crawlCoordinator.get(sessionId);
   if (crawlerRecord?.crawler?.isRunning && !crawlerRecord.crawler.isSuspended) crawlerRecord.crawler.stop();
-  crawlerSessions.delete(sessionId);
-  const clientsToClose = sseClients.filter(client => client.sessionId === sessionId);
-  sseClients = sseClients.filter(client => client.sessionId !== sessionId);
-  clientsToClose.forEach(client => {
-    try {
-      client.res.write(`event: revoked\ndata: ${JSON.stringify({ message: 'This dashboard session was revoked by an administrator.' })}\n\n`);
-      client.res.end();
-    } catch {}
-  });
+  crawlCoordinator.remove(sessionId);
+  sseHub.closeSession(sessionId, 'revoked', { message: 'This dashboard session was revoked by an administrator.' });
   return true;
 }
 
 function pruneCrawlerSessions() {
-  const now = Date.now();
-  for (const [sessionId, record] of crawlerSessions) {
-    if (!record.crawler.isRunning && now - record.updatedAt > SESSION_TTL_MS) {
-      crawlerSessions.delete(sessionId);
-    }
-  }
-
-  if (crawlerSessions.size <= MAX_RETAINED_SESSIONS) return;
-  const removable = [...crawlerSessions.entries()]
-    .filter(([, record]) => !record.crawler.isRunning)
-    .sort((a, b) => a[1].updatedAt - b[1].updatedAt);
-  while (crawlerSessions.size > MAX_RETAINED_SESSIONS && removable.length > 0) {
-    crawlerSessions.delete(removable.shift()[0]);
-  }
+  crawlCoordinator.prune({ ttlMs: SESSION_TTL_MS, maxRetainedSessions: MAX_RETAINED_SESSIONS });
 }
 
 function getCrawlCapacity() {
-  let activeCrawls = 0;
-  for (const crawler of runningCrawlers) {
-    if (crawler.isRunning) activeCrawls++;
-  }
-  return {
-    activeCrawls,
-    maxConcurrentCrawls: MAX_CONCURRENT_CRAWLS,
-    availableSlots: Math.max(0, MAX_CONCURRENT_CRAWLS - activeCrawls),
-    maxWorkersPerCrawl: MAX_WORKERS_PER_CRAWL,
-    maxUnlimitedCrawlPages: MAX_UNLIMITED_CRAWL_PAGES,
-    linkCheckConcurrency: LINK_CHECK_CONCURRENCY,
-    linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
-  };
+  return crawlCoordinator.getCapacity();
 }
 
 // Dashboard IDs are created by the server, retained in one browser tab, and
@@ -860,25 +831,13 @@ app.use('/api/crawler', requireDashboardUser, requireDashboardSession, requireSa
 app.use('/api/export', requireDashboardUser, requireDashboardSession);
 
 function broadcastSSE(sessionId, eventType, data) {
-  const record = crawlerSessions.get(sessionId);
-  if (record) record.updatedAt = Date.now();
   const session = dashboardSessions.get(sessionId);
   if (session) session.eventRevision = (session.eventRevision || 0) + 1;
-  const payload = `event: ${eventType}\ndata: ${JSON.stringify({ ...data, revision: session?.eventRevision || 0 })}\n\n`;
-  sseClients.filter(client => client.sessionId === sessionId).forEach(client => {
-    try {
-      client.res.write(payload);
-    } catch (e) {}
-  });
+  sseHub.broadcast(sessionId, eventType, { ...data, revision: session?.eventRevision || 0 });
 }
 
 function broadcastCapacity() {
-  const payload = `event: capacity\ndata: ${JSON.stringify(getCrawlCapacity())}\n\n`;
-  sseClients.forEach(client => {
-    try {
-      client.res.write(payload);
-    } catch (e) {}
-  });
+  sseHub.broadcastAll('capacity', getCrawlCapacity());
 }
 
 // SSE Stream for real-time crawler updates
@@ -891,10 +850,9 @@ app.get('/api/crawler/stream', (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no'); // Disables Nginx buffering on Hostinger / Cloud
   res.flushHeaders();
 
-  const newClient = { sessionId, res };
-  sseClients.push(newClient);
+  const newClient = sseHub.add(sessionId, res);
 
-  res.write(`event: status\ndata: ${JSON.stringify(getDashboardStatus(sessionId, crawler))}\n\n`);
+  sseHub.send(newClient, 'status', getDashboardStatus(sessionId, crawler));
 
   // Named events (not SSE comments) let the client detect proxy buffering as
   // well as broken connections. Re-check authentication on long-lived streams.
@@ -902,17 +860,17 @@ app.get('/api/crawler/stream', (req, res) => {
     const session = dashboardSessions.get(sessionId);
     const principal = getDashboardPrincipal(req, false);
     if (!session || session.revokedAt || !principal || session.ownerRole !== principal.role || session.ownerSessionId !== principal.id) {
-      res.write(`event: revoked\ndata: ${JSON.stringify({ message: 'Your dashboard session is no longer active. Please sign in again.' })}\n\n`);
+      sseHub.send(newClient, 'revoked', { message: 'Your dashboard session is no longer active. Please sign in again.' });
       res.end();
       return;
     }
     session.lastSeenAt = Date.now();
-    res.write(`event: heartbeat\ndata: ${JSON.stringify({ capacity: getCrawlCapacity() })}\n\n`);
+    sseHub.send(newClient, 'heartbeat', { capacity: getCrawlCapacity() });
   }, 10000);
 
   res.on('close', () => {
     clearInterval(heartbeat);
-    sseClients = sseClients.filter(client => client !== newClient);
+    sseHub.remove(newClient);
   });
 });
 
@@ -938,81 +896,8 @@ app.get('/api/crawler/snapshot', (req, res) => {
   res.json({ ...getDashboardStatus(sessionId, crawler), results: crawler?.results || [], links: crawler?.allLinks || [] });
 });
 
-function startManagedCrawler(req, sessionId, crawlId, crawler) {
-  let persistenceChain = Promise.resolve();
-  const queuePersistence = (task) => {
-    persistenceChain = persistenceChain
-      .then(task)
-      .catch(error => console.error(`Failed to persist crawl ${crawlId}:`, error.message));
-    return persistenceChain;
-  };
-  const persistCheckpoint = () => queuePersistence(() => crawlStorage.updateCrawlQueue(crawlId, crawler.getResumeState()));
-  crawlerSessions.set(sessionId, { crawler, crawlId, updatedAt: Date.now() });
-  runningCrawlers.add(crawler);
-  const sendCrawlerEvent = (eventType, data) => {
-    const activeSessionId = findCrawlerSessionId(crawler);
-    if (activeSessionId) broadcastSSE(activeSessionId, eventType, data);
-  };
-  crawler.on('started', data => {
-    sendCrawlerEvent('started', { ...data, historyAudit: crawler.historyAudit || null });
-    queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
-      status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus(), started: true
-    }));
-  });
-  crawler.on('engineSelected', data => sendCrawlerEvent('engineSelected', data));
-  let publishedLinkCount = 0;
-  crawler.on('pageCrawled', data => {
-    const links = crawler.allLinks.slice(publishedLinkCount);
-    publishedLinkCount = crawler.allLinks.length;
-    if (crawler.historyAudit) crawler.historyAudit.totalPages = crawler.stats.pagesCrawled;
-    sendCrawlerEvent('pageCrawled', { ...data, links, historyAudit: crawler.historyAudit || null });
-    queuePersistence(() => crawlStorage.savePage(crawlId, data.result));
-    if (crawler.stats.pagesCrawled % 10 === 0) persistCheckpoint();
-  });
-  crawler.on('paused', (data = {}) => {
-    sendCrawlerEvent('paused', data);
-    queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'paused', stats: crawler.stats, engine: crawler.getEngineStatus() }));
-    persistCheckpoint();
-  });
-  crawler.on('resumed', (data = {}) => {
-    sendCrawlerEvent('resumed', data);
-    queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus() }));
-  });
-  crawler.on('stopping', () => {
-    sendCrawlerEvent('stopping', {});
-    queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'stopping', stats: crawler.stats, engine: crawler.getEngineStatus() }));
-  });
-  crawler.on('stopped', data => {
-    sendCrawlerEvent('stopped', data);
-    queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'stopped', stats: data.stats, engine: data.engine }));
-    persistCheckpoint();
-  });
-  crawler.on('suspended', data => {
-    queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'paused', stats: data.stats, engine: data.engine }));
-    persistCheckpoint();
-  });
-  crawler.on('completed', data => {
-    sendCrawlerEvent('completed', data);
-    queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
-      status: 'completed', stats: data.stats, engine: data.engine, completed: true
-    }));
-    queuePersistence(() => crawlStorage.updateCrawlQueue(crawlId, null));
-  });
-  crawler.on('error', data => sendCrawlerEvent('error', data));
-
-  const crawlPromise = crawler.start();
-  broadcastCapacity();
-  crawlPromise
-    .catch(error => {
-      console.error('Crawler engine error:', error);
-      sendCrawlerEvent('error', { message: error.message });
-    })
-    .finally(async () => {
-      await persistenceChain;
-      runningCrawlers.delete(crawler);
-      broadcastCapacity();
-    });
-  return crawlPromise;
+function startManagedCrawler(sessionId, crawlId, crawler) {
+  return crawlCoordinator.start(sessionId, crawlId, crawler);
 }
 
 // Start Crawl
@@ -1096,84 +981,17 @@ app.post('/api/crawler/start', async (req, res) => {
       linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS
     });
     const crawlId = randomUUID();
-    let persistenceChain = Promise.resolve();
-    const queuePersistence = (task) => {
-      persistenceChain = persistenceChain
-        .then(task)
-        .catch(error => console.error(`Failed to persist crawl ${crawlId}:`, error.message));
-      return persistenceChain;
-    };
-    const persistCheckpoint = () => queuePersistence(() => crawlStorage.updateCrawlQueue(crawlId, crawler.getResumeState()));
-
     if (await crawlStorage.initialize()) {
-      await queuePersistence(() => crawlStorage.createCrawl({
+      await crawlStorage.createCrawl({
         id: crawlId,
         sessionId,
         ownerUserId: getCrawlOwnerId(req.dashboardPrincipal),
         seedUrl,
         config: crawler.getConfigSummary()
-      }));
+      });
     }
 
-    crawlerSessions.set(sessionId, { crawler, crawlId, updatedAt: Date.now() });
-    runningCrawlers.add(crawler);
-    const sendCrawlerEvent = (eventType, data) => {
-      const activeSessionId = findCrawlerSessionId(crawler);
-      if (activeSessionId) broadcastSSE(activeSessionId, eventType, data);
-    };
-
-    // Attach event handlers
-    crawler.on('started', data => {
-      sendCrawlerEvent('started', data);
-      queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
-        status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus(), started: true
-      }));
-    });
-    crawler.on('engineSelected', data => sendCrawlerEvent('engineSelected', data));
-    let publishedLinkCount = 0;
-    crawler.on('pageCrawled', data => {
-      const links = crawler.allLinks.slice(publishedLinkCount);
-      publishedLinkCount = crawler.allLinks.length;
-      sendCrawlerEvent('pageCrawled', { ...data, links });
-      queuePersistence(() => crawlStorage.savePage(crawlId, data.result));
-      if (crawler.stats.pagesCrawled % 10 === 0) persistCheckpoint();
-    });
-    crawler.on('paused', (data = {}) => {
-      sendCrawlerEvent('paused', data);
-      queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'paused', stats: crawler.stats, engine: crawler.getEngineStatus() }));
-      persistCheckpoint();
-    });
-    crawler.on('resumed', (data = {}) => {
-      sendCrawlerEvent('resumed', data);
-      queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus() }));
-    });
-    crawler.on('stopping', () => {
-      sendCrawlerEvent('stopping', {});
-      queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'stopping', stats: crawler.stats, engine: crawler.getEngineStatus() }));
-    });
-    crawler.on('stopped', data => {
-      sendCrawlerEvent('stopped', data);
-      queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
-        status: 'stopped', stats: data.stats, engine: data.engine
-      }));
-      persistCheckpoint();
-    });
-    crawler.on('suspended', data => {
-      queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'paused', stats: data.stats, engine: data.engine }));
-      persistCheckpoint();
-    });
-    crawler.on('completed', data => {
-      sendCrawlerEvent('completed', data);
-      queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
-        status: 'completed', stats: data.stats, engine: data.engine, completed: true
-      }));
-      queuePersistence(() => crawlStorage.updateCrawlQueue(crawlId, null));
-    });
-    crawler.on('error', data => sendCrawlerEvent('error', data));
-
-    // Run in background
-    const crawlPromise = crawler.start();
-    broadcastCapacity();
+    const crawlPromise = startManagedCrawler(sessionId, crawlId, crawler);
     auditSecurityEvent(req, 'crawl.started', 'success', {
       crawlId,
       target: auditTarget(seedUrl),
@@ -1183,17 +1001,6 @@ app.post('/api/crawler/start', async (req, res) => {
       maxDepth,
       workerThreads: concurrency
     });
-    crawlPromise
-      .catch(err => {
-        console.error('Crawler engine error:', err);
-        sendCrawlerEvent('error', { message: err.message });
-      })
-      .finally(async () => {
-        await persistenceChain;
-        runningCrawlers.delete(crawler);
-        broadcastCapacity();
-      });
-
     return res.json({
       success: true,
       message: 'Crawl started',
@@ -1212,7 +1019,7 @@ app.post('/api/crawler/pause', (req, res) => {
   const { sessionId, crawler } = getSessionCrawler(req);
   if (crawler?.isRunning) {
     crawler.pause();
-    auditSecurityEvent(req, 'crawl.paused', 'success', { crawlId: crawlerSessions.get(sessionId)?.crawlId || null });
+    auditSecurityEvent(req, 'crawl.paused', 'success', { crawlId: crawlCoordinator.get(sessionId)?.crawlId || null });
     return res.json({ success: true, message: 'Crawl paused' });
   }
   res.status(400).json({ error: 'No active running crawl to pause.' });
@@ -1222,7 +1029,7 @@ app.post('/api/crawler/resume', (req, res) => {
   const { sessionId, crawler } = getSessionCrawler(req);
   if (crawler?.isRunning) {
     crawler.resume();
-    auditSecurityEvent(req, 'crawl.resumed', 'success', { crawlId: crawlerSessions.get(sessionId)?.crawlId || null });
+    auditSecurityEvent(req, 'crawl.resumed', 'success', { crawlId: crawlCoordinator.get(sessionId)?.crawlId || null });
     return res.json({ success: true, message: 'Crawl resumed' });
   }
   res.status(400).json({ error: 'No active crawl to resume.' });
@@ -1232,7 +1039,7 @@ app.post('/api/crawler/stop', (req, res) => {
   const { sessionId, crawler } = getSessionCrawler(req);
   if (crawler?.isRunning) {
     crawler.stop();
-    auditSecurityEvent(req, 'crawl.stop-requested', 'success', { crawlId: crawlerSessions.get(sessionId)?.crawlId || null });
+    auditSecurityEvent(req, 'crawl.stop-requested', 'success', { crawlId: crawlCoordinator.get(sessionId)?.crawlId || null });
     return res.json({ success: true, message: 'Crawl cancellation requested' });
   }
   res.status(400).json({ error: 'No active crawl to stop.' });
@@ -1242,13 +1049,13 @@ app.post('/api/crawler/stop', (req, res) => {
 app.post('/api/crawler/reset', (req, res) => {
   try {
     const { sessionId, crawler } = getSessionCrawler(req);
-    const crawlId = crawlerSessions.get(sessionId)?.crawlId || null;
+    const crawlId = crawlCoordinator.get(sessionId)?.crawlId || null;
     const wasRunning = Boolean(crawler?.isRunning);
     if (crawler) {
       if (crawler.isRunning) {
         crawler.stop();
       }
-      crawlerSessions.delete(sessionId);
+      crawlCoordinator.remove(sessionId);
     }
     broadcastSSE(sessionId, 'reset', {});
     auditSecurityEvent(req, 'crawl.reset', 'success', { crawlId, wasRunning });
@@ -1510,7 +1317,7 @@ app.post('/api/crawler/history/:crawlId/restore', async (req, res) => {
     restoredCrawler.engineMode = crawl.engine?.mode || 'browser';
     restoredCrawler.engineProvider = crawl.engine?.provider || null;
     restoredCrawler.engineError = crawl.engine?.error || null;
-    crawlerSessions.set(sessionId, { crawler: restoredCrawler, crawlId: crawl.id, updatedAt: Date.now() });
+    crawlCoordinator.attach(sessionId, crawl.id, restoredCrawler);
     broadcastSSE(sessionId, 'restored', { crawlId: crawl.id, stats: restoredCrawler.stats, engine: restoredCrawler.getEngineStatus(), historyAudit: restoredCrawler.historyAudit });
     return res.json({ success: true, crawl, restoredPages: historyWindow.counts.all, loadedPages: historyWindow.results.length });
   } catch (error) {
@@ -1530,12 +1337,11 @@ app.post('/api/crawler/history/:crawlId/resume', async (req, res) => {
     // A valid owner can reclaim a still-running in-memory crawl after an
     // expired browser session. Transfer ownership rather than leaving two
     // dashboard sessions able to control the same worker pool.
-    for (const [previousSessionId, record] of crawlerSessions.entries()) {
-      if (record.crawlId === history.crawl.id && record.crawler?.isRunning && !record.crawler.isSuspended) {
-        moveCrawlerToDashboardSession(previousSessionId, sessionId, record);
-        broadcastSSE(sessionId, 'resumed', { reconnected: true });
-        return res.json({ success: true, crawlId: record.crawlId, message: 'Reconnected to active crawl', reconnected: true });
-      }
+    const activeCrawl = crawlCoordinator.findActiveByCrawlId(history.crawl.id);
+    if (activeCrawl) {
+      moveCrawlerToDashboardSession(activeCrawl.sessionId, sessionId, activeCrawl.record);
+      broadcastSSE(sessionId, 'resumed', { reconnected: true });
+      return res.json({ success: true, crawlId: activeCrawl.record.crawlId, message: 'Reconnected to active crawl', reconnected: true });
     }
 
     const capacity = getCrawlCapacity();
@@ -1579,7 +1385,7 @@ app.post('/api/crawler/history/:crawlId/resume', async (req, res) => {
       crawlId: history.crawl.id, totalPages: history.totalPages, loadedPages: history.results.length,
       totalResources: history.totalResources
     };
-    startManagedCrawler(req, sessionId, history.crawl.id, resumedCrawler);
+    startManagedCrawler(sessionId, history.crawl.id, resumedCrawler);
     auditSecurityEvent(req, 'crawl.resumed-from-history', 'success', { crawlId: history.crawl.id });
     return res.json({ success: true, crawlId: history.crawl.id, message: 'Crawl resumed' });
   } catch (error) {

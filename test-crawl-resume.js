@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { SiteCrawler } from './src/engine/crawler.js';
 import { CrawlStorage } from './src/storage/database.js';
+import { CrawlCoordinator } from './src/services/crawl-coordinator.js';
 
 test('SiteCrawler preserves pending queue in getResumeState when stopped', () => {
   const crawler = new SiteCrawler({ seedUrl: 'https://example.com' });
@@ -88,6 +90,62 @@ test('SiteCrawler records paused time separately from active crawl time', () => 
   crawler.stop();
   assert.equal(crawler.stats.pausedAt, null, 'Stopping a paused crawl must finalise its paused duration');
   assert.ok(crawler.stats.pausedDurationMs >= 5_500);
+});
+
+test('CrawlCoordinator owns an active crawl lifecycle and releases its slot when complete', async () => {
+  const saved = [];
+  const events = [];
+  const coordinator = new CrawlCoordinator({
+    storage: {
+      async updateCrawl(...args) { saved.push(['crawl', ...args]); },
+      async updateCrawlQueue(...args) { saved.push(['queue', ...args]); },
+      async savePage(...args) { saved.push(['page', ...args]); }
+    },
+    capacity: {
+      maxConcurrentCrawls: 3,
+      maxWorkersPerCrawl: 1,
+      maxUnlimitedCrawlPages: 50_000,
+      linkCheckConcurrency: 6,
+      linkCheckDeadlineMs: 30_000
+    },
+    onEvent: (...args) => events.push(args)
+  });
+  class TestCrawler extends EventEmitter {
+    constructor() {
+      super();
+      this.isRunning = false;
+      this.isPaused = false;
+      this.isSuspended = false;
+      this.stats = { pagesCrawled: 0 };
+      this.allLinks = [];
+      this.historyAudit = null;
+    }
+    getEngineStatus() { return { mode: 'direct' }; }
+    getResumeState() { return { queue: [] }; }
+    start() {
+      this.isRunning = true;
+      this.emit('started', { stats: this.stats });
+      return new Promise(resolve => {
+        this.complete = () => {
+          this.isRunning = false;
+          this.emit('completed', { stats: this.stats, engine: this.getEngineStatus() });
+          resolve();
+        };
+      });
+    }
+  }
+
+  const crawler = new TestCrawler();
+  const crawlPromise = coordinator.start('dashboard-1', 'crawl-1', crawler);
+  assert.equal(coordinator.get('dashboard-1')?.crawler, crawler);
+  assert.equal(coordinator.getCapacity().activeCrawls, 1);
+  crawler.complete();
+  await crawlPromise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(coordinator.getCapacity().activeCrawls, 0);
+  assert.equal(events.some(([, type]) => type === 'started'), true);
+  assert.equal(events.some(([, type]) => type === 'completed'), true);
+  assert.equal(saved.some(([type]) => type === 'crawl'), true);
 });
 
 test('CrawlStorage listCrawls supports isAdmin filter for legacy crawls', async () => {

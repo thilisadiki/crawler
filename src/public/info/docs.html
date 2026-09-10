@@ -179,7 +179,9 @@ PUBLIC_APP_URL=http://localhost:3000</code></pre>
 <p>The authenticated <code>/api/debug/browser</code> endpoint helps diagnose browser launch failures. It starts/checks the browser and should not be treated as a cheap public health probe. Database backups, hosting retention and restoration are operator-managed outside this app.</p></section>
       <section class="docs-section" id="architecture" aria-labelledby="architecture-title"><h2 id="architecture-title">Code map & API reference</h2>
 <div class="table-scroll"><table><caption>Where to make changes</caption><thead><tr><th>Location</th><th>Responsibility</th></tr></thead><tbody>
-<tr><td><code>server.js</code></td><td>Express routes, authentication, dashboard sessions, live streams, capacity and exports.</td></tr>
+<tr><td><code>server.js</code></td><td>Express composition, HTTP routes, authentication and dashboard-session access control.</td></tr>
+<tr><td><code>src/services/crawl-coordinator.js</code></td><td>Owns active crawler lifecycle, capacity slots, event wiring and durable persistence checkpoints.</td></tr>
+<tr><td><code>src/services/sse-hub.js</code></td><td>Owns open Server-Sent Event connections and event delivery.</td></tr>
 <tr><td><code>src/client/</code></td><td>React dashboard, typed API client and domain types; feature folders for pages, links, resources, issues, content, history and live crawl state.</td></tr>
 <tr><td><code>src/engine/</code></td><td>Crawl queue, browser lifecycle, extraction, robots handling, geography hints, link checks and report generation.</td></tr>
 <tr><td><code>src/shared/seoIssues.js</code></td><td>Browser-safe rules shared by dashboard and server exports.</td></tr>
@@ -204,7 +206,7 @@ PUBLIC_APP_URL=http://localhost:3000</code></pre>
 <tr><td><code>GET /api/admin/database-overview</code><br><code>GET /api/admin/security-events</code><br><code>GET /api/admin/sessions</code><br><code>GET /api/admin/auditors</code><br><code>GET /api/admin/crawl-history</code></td><td>Administrator-only operational, account and saved-crawl information.</td></tr>
 <tr><td><code>POST /api/admin/auditors</code><br><code>POST /api/admin/auditors/:userId/disable</code><br><code>POST /api/admin/sessions/:sessionId/revoke</code><br><code>POST /api/admin/crawl-history/:crawlId/delete</code><br><code>POST /api/admin/crawl-history/clear</code></td><td>Administrator-only account management, access revocation and permanent crawl deletion. Clearing all history requires <code>confirmation: "DELETE ALL"</code>.</td></tr>
 </tbody></table></div>
-<p>Schema tables are <code>crawl_runs</code>, <code>crawl_pages</code>, <code>crawl_links</code>, <code>security_events</code> and <code>app_users</code>. Page and link persistence uses transactions with ordered pending writes. Active crawl state remains in process memory rather than a database-backed scheduler.</p></section>
+<p>Schema tables are <code>crawl_runs</code>, <code>crawl_pages</code>, <code>crawl_links</code>, <code>security_events</code> and <code>app_users</code>. Page and link persistence uses transactions with ordered pending writes. The Crawl Coordinator owns active in-process crawl state; saved checkpoints allow an unfinished crawl to be resumed after the user signs in again, but this is not yet a multi-server database-backed job scheduler.</p></section>
       <section class="docs-section" id="troubleshooting" aria-labelledby="troubleshooting-title"><h2 id="troubleshooting-title">Troubleshooting & known boundaries</h2>
 <dl><dt>Only one page is audited</dt><dd>Check Single URL scope, page limit 1 and depth 0 first. Then inspect discovered links, redirects, exclusions, robots rules and whether the engine fell back to non-rendered HTML.</dd>
 <dt>Content exists, but the content-area badge says missing</dt><dd>Content extraction and identifying a main block are separate. Review full-page text, rendering status and the selector. Short pages may not pass the automatic heuristic.</dd>
