@@ -14,6 +14,7 @@ import { CrawlCoordinator } from './src/services/crawl-coordinator.js';
 import { SseHub } from './src/services/sse-hub.js';
 import { registerPublicRoutes } from './src/routes/public-routes.js';
 import { registerAdminManagementRoutes } from './src/routes/admin-management-routes.js';
+import { registerExportRoutes } from './src/routes/export-routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1225,112 +1226,8 @@ app.post('/api/crawler/history/:crawlId/resume', async (req, res) => {
   }
 });
 
-// Export Endpoints
-async function getExportData(crawler) {
-  if (!crawler) return null;
-  if (!crawler.historyAudit?.crawlId) return { results: crawler.results, links: crawler.allLinks };
-  try {
-    const history = await crawlStorage.getCrawl(crawler.historyAudit.crawlId);
-    if (!history) return null;
-    return {
-      results: history.results,
-      links: history.results.flatMap(page => (page.links || []).map(link => ({
-        ...link,
-        sourceUrl: page.url,
-        targetUrl: link.targetUrl || link.url || ''
-      })))
-    };
-  } catch (error) {
-    console.error('Could not load the full saved audit for export:', error.message);
-    return null;
-  }
-}
-
-app.get(['/api/export/workbook.xlsx', '/api/export/excel'], async (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  const exportData = await getExportData(crawler);
-  if (!exportData?.results.length) {
-    return res.status(400).send('No crawl data available to export.');
-  }
-  try {
-    const buffer = await Exporter.generateMultiSheetWorkbook(exportData.results, exportData.links);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="CrawlLoom_MultiSheet_Report_${Date.now()}.xlsx"`);
-    res.send(buffer);
-  } catch (err) {
-    console.error('Error generating Excel workbook:', err);
-    res.status(500).send('Error generating Excel workbook: ' + err.message);
-  }
-});
-
-app.get('/api/export/pages.csv', async (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  const exportData = await getExportData(crawler);
-  if (!exportData?.results.length) {
-    return res.status(400).send('No crawl data available to export.');
-  }
-  const csv = Exporter.generatePagesCSV(exportData.results);
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="seo_pages_crawl_${Date.now()}.csv"`);
-  res.send(csv);
-});
-
-app.get('/api/export/links.csv', async (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  const exportData = await getExportData(crawler);
-  if (!exportData?.links.length) {
-    return res.status(400).send('No links data available to export.');
-  }
-  const csv = Exporter.generateLinksCSV(exportData.links);
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="all_links_crawl_${Date.now()}.csv"`);
-  res.send(csv);
-});
-
-app.get('/api/export/issues.csv', async (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  const exportData = await getExportData(crawler);
-  if (!exportData?.results.length) {
-    return res.status(400).send('No crawl data available to export.');
-  }
-  const csv = Exporter.generateIssuesCSV(exportData.results, exportData.links);
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="seo_issues_crawl_${Date.now()}.csv"`);
-  res.send(csv);
-});
-
-app.get('/api/export/resources.csv', async (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  const exportData = await getExportData(crawler);
-  if (!exportData?.results.length) {
-    return res.status(400).send('No crawl data available to export.');
-  }
-  const csv = Exporter.generateResourcesCSV(exportData.results);
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="resources_assets_crawl_${Date.now()}.csv"`);
-  res.send(csv);
-});
-
-app.get('/api/export/images.csv', async (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  const exportData = await getExportData(crawler);
-  if (!exportData?.results.length) return res.status(400).send('No crawl data available to export.');
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="image_seo_crawl_${Date.now()}.csv"`);
-  res.send(Exporter.generateImagesCSV(exportData.results));
-});
-
-app.get(['/api/export/custom-content.csv', '/api/export/kentico.csv'], async (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  const exportData = await getExportData(crawler);
-  if (!exportData?.results.length) {
-    return res.status(400).send('No crawl data available to export.');
-  }
-  const csv = Exporter.generateCustomContentReportCSV(exportData.results);
-  res.setHeader('Content-Type', 'text/csv');
-  res.setHeader('Content-Disposition', `attachment; filename="custom_content_report_${Date.now()}.csv"`);
-  res.send(csv);
-});
+// Export routes share dashboard-session access middleware registered above.
+registerExportRoutes(app, { getSessionCrawler, crawlStorage, Exporter });
 
 app.listen(PORT, () => {
   console.log(`\n======================================================`);
