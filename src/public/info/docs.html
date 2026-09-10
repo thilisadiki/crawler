@@ -180,6 +180,7 @@ PUBLIC_APP_URL=http://localhost:3000</code></pre>
       <section class="docs-section" id="architecture" aria-labelledby="architecture-title"><h2 id="architecture-title">Code map & API reference</h2>
 <div class="table-scroll"><table><caption>Where to make changes</caption><thead><tr><th>Location</th><th>Responsibility</th></tr></thead><tbody>
 <tr><td><code>server.js</code></td><td>Express composition, HTTP routes, authentication and dashboard-session access control.</td></tr>
+<tr><td><code>src/routes/public-routes.js</code></td><td>Public product and information pages, robots/sitemap responses, static assets and protected dashboard entry.</td></tr>
 <tr><td><code>src/services/crawl-coordinator.js</code></td><td>Owns active crawler lifecycle, capacity slots, event wiring and durable persistence checkpoints.</td></tr>
 <tr><td><code>src/services/sse-hub.js</code></td><td>Owns open Server-Sent Event connections and event delivery.</td></tr>
 <tr><td><code>src/client/</code></td><td>React dashboard, typed API client and domain types; feature folders for pages, links, resources, issues, content, history and live crawl state.</td></tr>

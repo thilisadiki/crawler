@@ -12,6 +12,7 @@ import { validateCrawlRequest, CrawlRequestValidationError } from './src/securit
 import { GEO_PRESETS } from './src/engine/geoPresets.js';
 import { CrawlCoordinator } from './src/services/crawl-coordinator.js';
 import { SseHub } from './src/services/sse-hub.js';
+import { registerPublicRoutes } from './src/routes/public-routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,36 +70,12 @@ app.use((req, res, next) => {
   next();
 });
 app.use(['/admin', '/api', '/next'], preventIndexing);
-
-// The public homepage explains the product. The React dashboard is isolated
-// under /app so it can remain private and excluded from search indexes.
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'home.html')));
-app.get('/app', requireDashboardAccess, (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'next', 'index.html')));
-app.get('/index.html', (req, res) => res.redirect(301, '/'));
-app.use('/next', requireDashboardAccess);
-app.use(express.static(path.join(__dirname, 'src', 'public')));
-
-// Only public product and information pages are submitted to search engines.
-// Administration, API and preview routes are excluded above and in robots.txt.
-app.get('/robots.txt', (req, res) => {
-  res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /admin\nDisallow: /api\nDisallow: /next\n\nSitemap: ${PUBLIC_APP_URL}/sitemap.xml\n`);
+registerPublicRoutes(app, {
+  publicDir: path.join(__dirname, 'src', 'public'),
+  publicAppUrl: PUBLIC_APP_URL,
+  requireDashboardAccess,
+  staticMiddleware: express.static(path.join(__dirname, 'src', 'public'))
 });
-
-app.get('/sitemap.xml', (req, res) => {
-  const pages = ['', '/about', '/privacy', '/terms', '/acceptable-use', '/docs'];
-  const urls = pages.map(page => `  <url><loc>${PUBLIC_APP_URL}${page}/</loc></url>`).join('\n');
-  res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>`);
-});
-
-function sendInformationPage(filename) {
-  return (req, res) => res.sendFile(path.join(__dirname, 'src', 'public', 'info', filename));
-}
-
-app.get('/about', sendInformationPage('about.html'));
-app.get('/docs', sendInformationPage('docs.html'));
-app.get('/privacy', sendInformationPage('privacy.html'));
-app.get('/terms', sendInformationPage('terms.html'));
-app.get('/acceptable-use', sendInformationPage('acceptable-use.html'));
 
 // Database persistence is optional locally, but enabled automatically when the
 // Hostinger database environment variables are configured.
