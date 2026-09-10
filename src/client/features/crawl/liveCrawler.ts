@@ -210,8 +210,8 @@ export class LiveCrawler {
     else if (type === 'pageCrawled' && data.result) {
       this.update({ pages: [...this.value.pages, data.result], links: [...this.value.links, ...(data.links || [])], stats: data.stats || this.value.stats, queueLength: data.queueLength || 0, historyAudit: data.historyAudit ?? this.value.historyAudit });
     } else if (type === 'started') this.update({ state: 'running', pages: data.historyAudit ? this.value.pages : [], links: data.historyAudit ? this.value.links : [], stats: data.stats || (data.historyAudit ? this.value.stats : emptyStats()), engine: null, historyAudit: data.historyAudit ?? null, error: null });
-    else if (type === 'paused') this.update({ state: 'paused' });
-    else if (type === 'resumed') this.update({ state: 'running' });
+    else if (type === 'paused') this.update({ state: 'paused', stats: data.stats || this.value.stats });
+    else if (type === 'resumed') this.update({ state: 'running', stats: data.stats || this.value.stats });
     else if (type === 'stopping') this.update({ state: 'stopping', queueLength: 0 });
     else if (type === 'engineSelected') this.update({ engine: data });
     else if (type === 'completed' || type === 'stopped') {

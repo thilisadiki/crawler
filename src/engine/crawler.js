@@ -133,10 +133,18 @@ export class SiteCrawler extends EventEmitter {
       browserRestartsCount: 0,
       browserFallbacksCount: 0,
       startTime: null,
-      endTime: null
+      endTime: null,
+      pausedDurationMs: 0,
+      pausedAt: null
     };
     if (options.resumedStats && typeof options.resumedStats === 'object') {
-      this.stats = { ...this.stats, ...options.resumedStats, endTime: null };
+      this.stats = {
+        ...this.stats,
+        ...options.resumedStats,
+        endTime: null,
+        // Offline time after restoring a saved crawl is not crawl time.
+        pausedAt: null
+      };
     }
   }
 
@@ -1169,9 +1177,11 @@ export class SiteCrawler extends EventEmitter {
     }
   }
 
-  pause() {
+  pause(pausedAt = Date.now()) {
+    if (!this.isRunning || this.isPaused || this.isCancelled) return;
     this.isPaused = true;
-    this.emit('paused');
+    this.stats.pausedAt = pausedAt;
+    this.emit('paused', { stats: { ...this.stats } });
   }
 
   async pauseAndWait(timeoutMs = 30000) {
@@ -1183,13 +1193,22 @@ export class SiteCrawler extends EventEmitter {
     return this.pagesInFlight === 0;
   }
 
-  resume() {
+  resume(resumedAt = Date.now()) {
+    this.completePausedDuration(resumedAt);
     this.isPaused = false;
-    this.emit('resumed');
+    this.emit('resumed', { stats: { ...this.stats } });
+  }
+
+  completePausedDuration(resumedAt = Date.now()) {
+    if (!this.stats.pausedAt) return;
+    this.stats.pausedDurationMs = (Number(this.stats.pausedDurationMs) || 0)
+      + Math.max(0, resumedAt - this.stats.pausedAt);
+    this.stats.pausedAt = null;
   }
 
   stop() {
     if (!this.isRunning || this.isCancelled || this.isSuspended) return;
+    this.completePausedDuration();
     this.isCancelled = true;
     this.isPaused = false;
     this.interruptedItems = [...this.inFlightItems.values()].map(item => ({ ...item }));
@@ -1204,6 +1223,7 @@ export class SiteCrawler extends EventEmitter {
 
   suspend() {
     if (!this.isRunning || this.isCancelled || this.isSuspended) return;
+    this.completePausedDuration();
     this.isSuspended = true;
     this.isCancelled = true;
     this.isPaused = false;

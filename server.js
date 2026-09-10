@@ -969,13 +969,13 @@ function startManagedCrawler(req, sessionId, crawlId, crawler) {
     queuePersistence(() => crawlStorage.savePage(crawlId, data.result));
     if (crawler.stats.pagesCrawled % 10 === 0) persistCheckpoint();
   });
-  crawler.on('paused', () => {
-    sendCrawlerEvent('paused', {});
+  crawler.on('paused', (data = {}) => {
+    sendCrawlerEvent('paused', data);
     queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'paused', stats: crawler.stats, engine: crawler.getEngineStatus() }));
     persistCheckpoint();
   });
-  crawler.on('resumed', () => {
-    sendCrawlerEvent('resumed', {});
+  crawler.on('resumed', (data = {}) => {
+    sendCrawlerEvent('resumed', data);
     queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus() }));
   });
   crawler.on('stopping', () => {
@@ -1138,13 +1138,13 @@ app.post('/api/crawler/start', async (req, res) => {
       queuePersistence(() => crawlStorage.savePage(crawlId, data.result));
       if (crawler.stats.pagesCrawled % 10 === 0) persistCheckpoint();
     });
-    crawler.on('paused', () => {
-      sendCrawlerEvent('paused', {});
+    crawler.on('paused', (data = {}) => {
+      sendCrawlerEvent('paused', data);
       queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'paused', stats: crawler.stats, engine: crawler.getEngineStatus() }));
       persistCheckpoint();
     });
-    crawler.on('resumed', () => {
-      sendCrawlerEvent('resumed', {});
+    crawler.on('resumed', (data = {}) => {
+      sendCrawlerEvent('resumed', data);
       queuePersistence(() => crawlStorage.updateCrawl(crawlId, { status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus() }));
     });
     crawler.on('stopping', () => {

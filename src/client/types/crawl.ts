@@ -28,6 +28,8 @@ export interface CrawlStats {
   customDetectedCount?: number;
   startTime?: number;
   endTime?: number | null;
+  pausedDurationMs?: number;
+  pausedAt?: number | null;
 }
 
 export interface CrawlCapacity {

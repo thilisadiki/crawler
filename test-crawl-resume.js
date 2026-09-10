@@ -71,6 +71,25 @@ test('SiteCrawler initializes with resumed queue and visited set without re-addi
   assert.equal(crawler.stats.pagesCrawled, 1);
 });
 
+test('SiteCrawler records paused time separately from active crawl time', () => {
+  const crawler = new SiteCrawler({ seedUrl: 'https://example.com' });
+  crawler.isRunning = true;
+
+  crawler.pause(1_000);
+  assert.equal(crawler.isPaused, true);
+  assert.equal(crawler.stats.pausedAt, 1_000);
+
+  crawler.resume(6_500);
+  assert.equal(crawler.isPaused, false);
+  assert.equal(crawler.stats.pausedAt, null);
+  assert.equal(crawler.stats.pausedDurationMs, 5_500);
+
+  crawler.pause(8_000);
+  crawler.stop();
+  assert.equal(crawler.stats.pausedAt, null, 'Stopping a paused crawl must finalise its paused duration');
+  assert.ok(crawler.stats.pausedDurationMs >= 5_500);
+});
+
 test('CrawlStorage listCrawls supports isAdmin filter for legacy crawls', async () => {
   const storage = new CrawlStorage();
   let executedSql = '';

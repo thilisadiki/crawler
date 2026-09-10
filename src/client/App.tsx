@@ -43,9 +43,10 @@ function formatBytes(value?: number) {
   return value >= 1024 * 1024 ? `${(value / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(value / 1024)} KB`;
 }
 
-function formatDuration(startTime?: number, endTime?: number | null) {
+function formatDuration(startTime?: number, endTime?: number | null, pausedDurationMs = 0, pausedAt?: number | null) {
   if (!startTime || !endTime) return '';
-  const seconds = Math.max(0, Math.round((endTime - startTime) / 1000));
+  const currentPauseMs = pausedAt ? Math.max(0, endTime - pausedAt) : 0;
+  const seconds = Math.max(0, Math.round((endTime - startTime - pausedDurationMs - currentPauseMs) / 1000));
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
@@ -201,7 +202,12 @@ export default function App() {
     ? 'Checking crawl capacity…'
     : `${availableCrawlSlots} crawl slot${availableCrawlSlots === 1 ? '' : 's'} free`;
   const crawlElapsed = crawler.stats.startTime
-    ? formatDuration(crawler.stats.startTime, crawler.state === 'completed' ? crawler.stats.endTime : elapsedClock)
+    ? formatDuration(
+      crawler.stats.startTime,
+      crawler.state === 'completed' ? crawler.stats.endTime : elapsedClock,
+      crawler.stats.pausedDurationMs,
+      crawler.stats.pausedAt
+    )
     : crawler.state === 'running' ? 'Starting…' : '—';
   const auditedPageCount = crawler.historyAudit?.totalPages ?? crawler.pages.length;
   const discoveredLinkCount = crawler.historyAudit
@@ -218,18 +224,27 @@ export default function App() {
     return () => { active = false; };
   }, []);
   useEffect(() => {
-    if (!running) return;
+    if (crawler.state === 'paused' && crawler.stats.pausedAt) {
+      setElapsedClock(crawler.stats.pausedAt);
+      return;
+    }
+    if (crawler.state !== 'running') return;
     setElapsedClock(Date.now());
     const timer = window.setInterval(() => setElapsedClock(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [running]);
+  }, [crawler.state, crawler.stats.pausedAt]);
   useEffect(() => {
     const completedAt = crawler.stats.endTime;
     const pageCount = crawler.stats.pagesCrawled || 0;
     if (!completionNotificationEligible.current || crawler.state !== 'completed' || pageCount < 50 || !completedAt || notifiedCompletion.current === completedAt) return;
     notifiedCompletion.current = completedAt;
     completionNotificationEligible.current = false;
-    const duration = formatDuration(crawler.stats.startTime, completedAt);
+    const duration = formatDuration(
+      crawler.stats.startTime,
+      completedAt,
+      crawler.stats.pausedDurationMs,
+      crawler.stats.pausedAt
+    );
     const message = `Audit complete: ${pageCount.toLocaleString()} pages${duration ? ` in ${duration}` : ''}.`;
     setCompletionNotice(message);
     if ('Notification' in window && window.Notification.permission === 'granted') {
@@ -350,7 +365,7 @@ export default function App() {
         <Stat label="Discovered links" value={(crawler.stats.internalLinksCount || 0) + (crawler.stats.externalLinksCount || 0)} detail={`${crawler.stats.externalLinksCount || 0} external`} />
         <Stat label="Content area coverage" value={`${auditedPageCount ? Math.round(((crawler.stats.customDetectedCount ?? contentPages) / auditedPageCount) * 100) : 0}%`} detail={`${(crawler.stats.customDetectedCount ?? contentPages).toLocaleString()} pages verified`} />
         <Stat label="Errors & exclusions" value={errors} detail={crawler.engine?.mode === 'http' ? 'Direct DOM engine' : 'Browser-rendered crawl'} />
-        <Stat label="Elapsed time" value={crawlElapsed} detail={running ? 'Live crawl duration' : crawler.state === 'completed' ? 'Final crawl duration' : 'Starts when the crawl begins'} />
+        <Stat label="Elapsed time" value={crawlElapsed} detail={crawler.state === 'paused' ? 'Paused — active time frozen' : running ? 'Live crawl duration' : crawler.state === 'completed' ? 'Final crawl duration' : 'Starts when the crawl begins'} />
       </section>
       <section className="card explorer">
         <div className="explorer-head"><div><p className="eyebrow">{explorerView === 'pages' ? 'Audited pages' : explorerView === 'links' ? 'Discovered links & anchors' : explorerView === 'resources' ? 'Resources & assets' : explorerView === 'issues' ? 'SEO issues' : explorerView === 'comparison' ? 'Crawl comparison' : 'Saved crawl history'}</p><h2>{explorerView === 'pages' ? `${auditedPageCount.toLocaleString()} page${auditedPageCount === 1 ? '' : 's'} collected` : explorerView === 'links' ? `${crawler.links.length.toLocaleString()} link${crawler.links.length === 1 ? '' : 's'} collected` : explorerView === 'resources' ? 'Embedded resource inventory' : explorerView === 'issues' ? `${issueCount.toLocaleString()} issue${issueCount === 1 ? '' : 's'} identified` : explorerView === 'comparison' ? `${crawlComparison?.rows.length.toLocaleString() || 0} changes identified` : 'Crawls retained in MySQL'}</h2></div><div className="export-wrap"><button className="secondary" onClick={() => setExportOpen(open => !open)}>Export ▾</button>{exportOpen && <div className="export-menu">{[
