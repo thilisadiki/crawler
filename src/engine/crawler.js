@@ -106,6 +106,11 @@ export class SiteCrawler extends EventEmitter {
     // Workers reserve a page slot before doing asynchronous work. This keeps a
     // configured page limit exact even when several workers start together.
     this.pagesInFlight = 0;
+    // A checkpoint must retain pages already reserved by workers. If a logout
+    // or stop interrupts one of them, it needs to return to the resume queue
+    // rather than being marked visited and silently skipped.
+    this.inFlightItems = new Map();
+    this.interruptedItems = [];
     this.nextPageId = Number.isInteger(options.resumedNextPageId) ? options.resumedNextPageId : 1;
     this.results = Array.isArray(options.resumedResults) ? [...options.resumedResults] : [];
     this.allLinks = Array.isArray(options.resumedAllLinks) ? [...options.resumedAllLinks] : [];
@@ -513,6 +518,7 @@ export class SiteCrawler extends EventEmitter {
         continue;
       }
       this.visited.add(item.url);
+      this.inFlightItems.set(item.url, { url: item.url, depth: item.depth, sourceUrl: item.sourceUrl });
 
       // Reserve before awaiting page work. Without this, every worker can see
       // the same completed count and collectively exceed maxPages.
@@ -526,6 +532,7 @@ export class SiteCrawler extends EventEmitter {
           await this.processPageHttp(item, workerId);
         }
       } finally {
+        this.inFlightItems.delete(item.url);
         this.pagesInFlight = Math.max(0, this.pagesInFlight - 1);
       }
 
@@ -1185,7 +1192,8 @@ export class SiteCrawler extends EventEmitter {
     if (!this.isRunning || this.isCancelled || this.isSuspended) return;
     this.isCancelled = true;
     this.isPaused = false;
-    this.stoppedQueue = this.queue.map(item => ({ ...item }));
+    this.interruptedItems = [...this.inFlightItems.values()].map(item => ({ ...item }));
+    this.stoppedQueue = [...this.queue, ...this.interruptedItems].map(item => ({ ...item }));
     this.queue = [];
     this.abortController?.abort();
     for (const pageContext of [...this.activePageContexts]) {
@@ -1199,6 +1207,7 @@ export class SiteCrawler extends EventEmitter {
     this.isSuspended = true;
     this.isCancelled = true;
     this.isPaused = false;
+    this.interruptedItems = [...this.inFlightItems.values()].map(item => ({ ...item }));
     this.abortController?.abort();
     for (const pageContext of [...this.activePageContexts]) {
       this.closePageContext(pageContext).catch(() => {});
@@ -1211,9 +1220,14 @@ export class SiteCrawler extends EventEmitter {
 
   getResumeState() {
     const queueSource = this.queue.length > 0 ? this.queue : (this.stoppedQueue || []);
+    const inFlight = [...this.inFlightItems.values(), ...this.interruptedItems];
+    const pendingUrls = new Set(inFlight.map(item => item.url));
+    const combinedQueue = [...queueSource, ...inFlight]
+      .filter(item => item?.url)
+      .filter((item, index, items) => items.findIndex(candidate => candidate.url === item.url) === index);
     return {
-      queue: queueSource.map(item => ({ url: item.url, depth: item.depth, sourceUrl: item.sourceUrl })),
-      visited: [...this.visited],
+      queue: combinedQueue.map(item => ({ url: item.url, depth: item.depth, sourceUrl: item.sourceUrl })),
+      visited: [...this.visited].filter(url => !pendingUrls.has(url)),
       redirectAliases: Object.fromEntries(this.redirectAliases),
       stats: { ...this.stats },
       nextPageId: this.nextPageId

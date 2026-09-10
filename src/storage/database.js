@@ -431,30 +431,39 @@ export class CrawlStorage {
     return rows[0]?.ownerUserId || null;
   }
 
-  async getUnvisitedFrontier(crawlId, limit = 500) {
-    if (!(await this.initialize()) || !this.pool) return [];
-    try {
-      const [rows] = await this.pool.execute(
-        `SELECT DISTINCT l.target_url AS url, l.source_url AS sourceUrl, p.depth AS sourceDepth
-         FROM crawl_links l
-         LEFT JOIN crawl_pages p ON p.id = l.page_id
-         WHERE l.crawl_id = ?
-           AND l.is_valid_http = 1
-           AND l.target_url IS NOT NULL
-           AND l.target_url != ''
-           AND l.target_url NOT IN (SELECT url FROM crawl_pages WHERE crawl_id = ?)
-         LIMIT ?`,
-        [crawlId, crawlId, limit]
-      );
-      return rows.map(row => ({
-        url: row.url,
-        depth: (row.sourceDepth !== null && row.sourceDepth !== undefined ? row.sourceDepth : 0) + 1,
-        sourceUrl: row.sourceUrl || 'DISCOVERED'
-      }));
-    } catch (error) {
-      console.warn('Could not query unvisited frontier:', error.message);
-      return [];
-    }
+  /**
+   * Load only what is needed to resume a saved crawl. In particular, do not
+   * call getCrawl() here: that method intentionally returns full text, links,
+   * resources and images for exports, which is unsafe for a large resume.
+   */
+  async getCrawlResumeData(id) {
+    if (!(await this.initialize()) || !this.pool) return null;
+    const pageWindow = await this.getCrawlPageWindow(id, { limit: 50 });
+    if (!pageWindow) return null;
+    const [crawlRows] = await this.pool.execute(
+      `SELECT id, owner_user_id, seed_url, config_json, status, stats_json, engine_json, queue_json,
+        created_at, started_at, completed_at
+       FROM crawl_runs WHERE id = ? LIMIT 1`,
+      [id]
+    );
+    const crawl = crawlRows[0];
+    if (!crawl) return null;
+    const [visitedRows] = await this.pool.execute('SELECT url FROM crawl_pages WHERE crawl_id = ? ORDER BY page_number ASC', [id]);
+    const checkpoint = parseJson(crawl.queue_json, {});
+    return {
+      crawl: {
+        id: crawl.id, ownerUserId: crawl.owner_user_id || null, seedUrl: crawl.seed_url,
+        status: crawl.status, config: parseJson(crawl.config_json, {}), stats: parseJson(crawl.stats_json, null),
+        engine: parseJson(crawl.engine_json, null), queue: Array.isArray(checkpoint.queue) ? checkpoint.queue : [],
+        visited: visitedRows.map(row => row.url).filter(Boolean),
+        redirectAliases: checkpoint.redirectAliases && typeof checkpoint.redirectAliases === 'object' ? checkpoint.redirectAliases : {},
+        nextPageId: Number.isInteger(checkpoint.nextPageId) ? checkpoint.nextPageId : null,
+        createdAt: crawl.created_at, startedAt: crawl.started_at, completedAt: crawl.completed_at
+      },
+      results: pageWindow.results,
+      totalPages: pageWindow.counts.all,
+      totalResources: pageWindow.resourceTotal || 0
+    };
   }
 
   async getCrawl(id) {

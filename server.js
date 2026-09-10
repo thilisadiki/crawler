@@ -747,6 +747,23 @@ function getSessionCrawler(req) {
   return { sessionId, crawler: record?.crawler || null };
 }
 
+function findCrawlerSessionId(crawler) {
+  for (const [sessionId, record] of crawlerSessions) {
+    if (record?.crawler === crawler) return sessionId;
+  }
+  return null;
+}
+
+// A crawl has exactly one controlling dashboard session. Moving it first
+// removes the old mapping, then revokes that session so it cannot retain
+// controls or receive a second copy of the live events.
+function moveCrawlerToDashboardSession(fromSessionId, toSessionId, record) {
+  if (!record || fromSessionId === toSessionId) return;
+  crawlerSessions.delete(fromSessionId);
+  crawlerSessions.set(toSessionId, record);
+  revokeDashboardSession(fromSessionId);
+}
+
 function serializeSession(record, type, currentAdminSessionId) {
   const now = Date.now();
   const status = record.revokedAt ? 'Revoked' : record.endedAt ? 'Signed out' : now - record.lastSeenAt <= ACTIVE_SESSION_WINDOW_MS ? 'Active' : 'Recent';
@@ -835,15 +852,6 @@ app.post('/api/crawler/session', requireDashboardUser, requireSameOrigin, async 
     }
   }
   const created = createDashboardSession(req, principal);
-  for (const [, crawlerRecord] of crawlerSessions.entries()) {
-    if (crawlerRecord?.crawler?.isRunning && !crawlerRecord.crawler.isSuspended) {
-      const crawlOwner = await crawlStorage.getCrawlOwner(crawlerRecord.crawlId);
-      if (crawlOwner === getCrawlOwnerId(principal) || (principal?.role === 'Administrator' && !crawlOwner)) {
-        crawlerSessions.set(created.id, crawlerRecord);
-        break;
-      }
-    }
-  }
   auditSecurityEvent(req, 'dashboard.session.created', 'success', { accountType: principal?.role }, { adminSession: principal?.role === 'Administrator' ? principal.session : null, dashboardSession: created });
   return res.status(201).json({ sessionId: created.id, resumed: false });
 });
@@ -942,10 +950,11 @@ function startManagedCrawler(req, sessionId, crawlId, crawler) {
   crawlerSessions.set(sessionId, { crawler, crawlId, updatedAt: Date.now() });
   runningCrawlers.add(crawler);
   const sendCrawlerEvent = (eventType, data) => {
-    if (crawlerSessions.get(sessionId)?.crawler === crawler) broadcastSSE(sessionId, eventType, data);
+    const activeSessionId = findCrawlerSessionId(crawler);
+    if (activeSessionId) broadcastSSE(activeSessionId, eventType, data);
   };
   crawler.on('started', data => {
-    sendCrawlerEvent('started', data);
+    sendCrawlerEvent('started', { ...data, historyAudit: crawler.historyAudit || null });
     queuePersistence(() => crawlStorage.updateCrawl(crawlId, {
       status: 'running', stats: crawler.stats, engine: crawler.getEngineStatus(), started: true
     }));
@@ -955,7 +964,8 @@ function startManagedCrawler(req, sessionId, crawlId, crawler) {
   crawler.on('pageCrawled', data => {
     const links = crawler.allLinks.slice(publishedLinkCount);
     publishedLinkCount = crawler.allLinks.length;
-    sendCrawlerEvent('pageCrawled', { ...data, links });
+    if (crawler.historyAudit) crawler.historyAudit.totalPages = crawler.stats.pagesCrawled;
+    sendCrawlerEvent('pageCrawled', { ...data, links, historyAudit: crawler.historyAudit || null });
     queuePersistence(() => crawlStorage.savePage(crawlId, data.result));
     if (crawler.stats.pagesCrawled % 10 === 0) persistCheckpoint();
   });
@@ -1108,9 +1118,8 @@ app.post('/api/crawler/start', async (req, res) => {
     crawlerSessions.set(sessionId, { crawler, crawlId, updatedAt: Date.now() });
     runningCrawlers.add(crawler);
     const sendCrawlerEvent = (eventType, data) => {
-      if (crawlerSessions.get(sessionId)?.crawler === crawler) {
-        broadcastSSE(sessionId, eventType, data);
-      }
+      const activeSessionId = findCrawlerSessionId(crawler);
+      if (activeSessionId) broadcastSSE(activeSessionId, eventType, data);
     };
 
     // Attach event handlers
@@ -1512,41 +1521,32 @@ app.post('/api/crawler/history/:crawlId/restore', async (req, res) => {
 app.post('/api/crawler/history/:crawlId/resume', async (req, res) => {
   const { sessionId, crawler: currentCrawler } = getSessionCrawler(req);
   if (currentCrawler?.isRunning) return res.status(409).json({ error: 'Pause or stop the current crawl before resuming saved history.' });
-
-  // Re-attach if crawl is already running in memory
-  for (const [, record] of crawlerSessions.entries()) {
-    if (record.crawlId === req.params.crawlId && record.crawler?.isRunning && !record.crawler.isSuspended) {
-      crawlerSessions.set(sessionId, record);
-      broadcastSSE(sessionId, 'resumed', {});
-      return res.json({ success: true, crawlId: record.crawlId, message: 'Reconnected to active crawl', reconnected: true });
-    }
-  }
-
-  const capacity = getCrawlCapacity();
-  if (capacity.activeCrawls >= capacity.maxConcurrentCrawls) {
-    return res.status(429).json({ error: 'All crawl slots are occupied. Try again when another crawl finishes.', capacity });
-  }
   try {
-    const history = await crawlStorage.getCrawl(req.params.crawlId);
+    const history = await crawlStorage.getCrawlResumeData(req.params.crawlId);
     if (!history) return res.status(404).json({ error: 'Saved crawl not found.' });
     if (!canAccessCrawl(req, history.crawl)) return res.status(403).json({ error: 'You do not have access to resume this crawl.' });
     if (history.crawl.status === 'completed') return res.status(409).json({ error: 'Completed crawls cannot be resumed.' });
 
-    let pendingQueue = Array.isArray(history.crawl.queue) ? history.crawl.queue : [];
-    if (pendingQueue.length === 0) {
-      const recovered = await crawlStorage.getUnvisitedFrontier(history.crawl.id, 500);
-      if (recovered.length > 0) {
-        pendingQueue = recovered;
+    // A valid owner can reclaim a still-running in-memory crawl after an
+    // expired browser session. Transfer ownership rather than leaving two
+    // dashboard sessions able to control the same worker pool.
+    for (const [previousSessionId, record] of crawlerSessions.entries()) {
+      if (record.crawlId === history.crawl.id && record.crawler?.isRunning && !record.crawler.isSuspended) {
+        moveCrawlerToDashboardSession(previousSessionId, sessionId, record);
+        broadcastSSE(sessionId, 'resumed', { reconnected: true });
+        return res.json({ success: true, crawlId: record.crawlId, message: 'Reconnected to active crawl', reconnected: true });
       }
     }
+
+    const capacity = getCrawlCapacity();
+    if (capacity.activeCrawls >= capacity.maxConcurrentCrawls) {
+      return res.status(429).json({ error: 'All crawl slots are occupied. Try again when another crawl finishes.', capacity });
+    }
+
+    const pendingQueue = Array.isArray(history.crawl.queue) ? history.crawl.queue : [];
     if (pendingQueue.length === 0) {
       return res.status(409).json({ error: 'This crawl has no saved pending queue. Start a new crawl instead.' });
     }
-
-    const visitedList = Array.isArray(history.crawl.visited) && history.crawl.visited.length > 0
-      ? history.crawl.visited
-      : history.results.map(page => page.url);
-
     const config = history.crawl.config || {};
     const resumedCrawler = new SiteCrawler({
       seedUrl: history.crawl.seedUrl,
@@ -1568,17 +1568,17 @@ app.post('/api/crawler/history/:crawlId/resume', async (req, res) => {
       linkCheckDeadlineMs: LINK_CHECK_DEADLINE_MS,
       isResumed: true,
       resumedQueue: pendingQueue,
-      resumedVisited: visitedList,
+      resumedVisited: history.crawl.visited,
       resumedResults: history.results,
-      resumedAllLinks: history.results.flatMap(page => (page.links || []).map(link => ({
-        ...link,
-        sourceUrl: page.url,
-        targetUrl: link.targetUrl || link.url || ''
-      }))),
+      resumedAllLinks: [],
       resumedStats: history.crawl.stats,
-      resumedNextPageId: history.crawl.nextPageId || history.results.length + 1,
+      resumedNextPageId: history.crawl.nextPageId || history.totalPages + 1,
       resumedRedirectAliases: history.crawl.redirectAliases
     });
+    resumedCrawler.historyAudit = {
+      crawlId: history.crawl.id, totalPages: history.totalPages, loadedPages: history.results.length,
+      totalResources: history.totalResources
+    };
     startManagedCrawler(req, sessionId, history.crawl.id, resumedCrawler);
     auditSecurityEvent(req, 'crawl.resumed-from-history', 'success', { crawlId: history.crawl.id });
     return res.json({ success: true, crawlId: history.crawl.id, message: 'Crawl resumed' });
