@@ -54,6 +54,20 @@ test('thresholds and content-area versus full-page duplicate matching are preser
   assert.equal(getSeoIssues(separateSources, []).filter(issue => issue.code === 'duplicate-content').length, 0);
 });
 
+test('canonical www and apex aliases do not create a false mismatch', () => {
+  const aliases = [
+    healthyPage('home', { url: 'https://www.example.com/', canonical: 'https://example.com/' }),
+    healthyPage('news', { url: 'https://example.com/news/', canonical: 'https://www.example.com/news/' }),
+    healthyPage('different-path', { canonical: 'https://example.com/elsewhere' }),
+    healthyPage('subdomain', { canonical: 'https://blog.example.com/subdomain' })
+  ];
+  const canonicalIssues = getSeoIssues(aliases, []).filter(issue => issue.code === 'canonical-mismatch');
+  assert.deepEqual(canonicalIssues.map(issue => issue.url).sort(), [
+    'https://example.com/different-path',
+    'https://example.com/subdomain'
+  ]);
+});
+
 test('CSV and XLSX issues match the dashboard, including quoted text and missing link sources', async () => {
   const pages = [healthyPage('report', { title: 'Short, "quoted" title', metaDescription: 'Description with\na line break', totalWords: 299 })];
   const links = [{ targetUrl: 'https://example.com/broken', isInternal: true, statusCode: 0 }];

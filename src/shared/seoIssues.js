@@ -84,7 +84,7 @@ export function getSeoIssues(results = [], allLinks = []) {
 
     const canonical = (page.canonical || '').trim();
     if (!canonical) add('missing-canonical', page, 'No canonical URL was extracted.');
-    else if (comparableUrl(canonical) !== comparableUrl(page.url)) add('canonical-mismatch', page, `Canonical: ${canonical}`);
+    else if (!canonicalTargetsSamePage(canonical, page.url)) add('canonical-mismatch', page, `Canonical: ${canonical}`);
 
     if (/\bnoindex\b/i.test(page.metaRobots || '')) add('noindex', page, `Robots directive: ${page.metaRobots}`);
     const contentWords = page.customContent?.wordCount || page.totalWords || 0;
@@ -137,6 +137,26 @@ export function comparableUrl(value) {
     return parsed.toString().replace(/\/$/, '').toLowerCase();
   } catch {
     return String(value || '').trim().replace(/\/$/, '').toLowerCase();
+  }
+}
+
+// www and apex hostnames commonly represent one site, with one deliberately
+// canonicalising to the other. That is a valid canonical implementation, not
+// a page-level mismatch. Other subdomains remain distinct.
+/** @param {string} canonical @param {string} pageUrl */
+export function canonicalTargetsSamePage(canonical, pageUrl) {
+  try {
+    const canonicalUrl = new URL(canonical);
+    const crawledUrl = new URL(pageUrl);
+    /** @param {string} host */
+    const normalizedHost = host => host.toLowerCase().replace(/^www\./, '');
+    return canonicalUrl.protocol === crawledUrl.protocol
+      && normalizedHost(canonicalUrl.hostname) === normalizedHost(crawledUrl.hostname)
+      && canonicalUrl.port === crawledUrl.port
+      && canonicalUrl.pathname.replace(/\/$/, '').toLowerCase() === crawledUrl.pathname.replace(/\/$/, '').toLowerCase()
+      && canonicalUrl.search === crawledUrl.search;
+  } catch {
+    return comparableUrl(canonical) === comparableUrl(pageUrl);
   }
 }
 
