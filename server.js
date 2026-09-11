@@ -16,6 +16,7 @@ import { registerPublicRoutes } from './src/routes/public-routes.js';
 import { registerAdminManagementRoutes } from './src/routes/admin-management-routes.js';
 import { registerExportRoutes } from './src/routes/export-routes.js';
 import { registerCrawlerStatusRoutes } from './src/routes/crawler-status-routes.js';
+import { registerCrawlHistoryListRoutes } from './src/routes/crawl-history-list-routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -952,32 +953,8 @@ app.get('/api/debug/browser', requireAdmin, async (req, res) => {
 // Status & Results
 registerCrawlerStatusRoutes(app, { getSessionCrawler, getCrawlCapacity, crawlStorage, appRelease: APP_RELEASE });
 
-// Persistent crawl history. These routes remain available after a deployment or process restart.
-app.get('/api/crawler/history', async (req, res) => {
-  try {
-    const isAdmin = req.dashboardPrincipal?.role === 'Administrator';
-    const crawls = await crawlStorage.listCrawls(req.query.limit, getCrawlOwnerId(req.dashboardPrincipal), isAdmin);
-    res.json({ storage: crawlStorage.getStatus(), crawls });
-  } catch (error) {
-    res.status(500).json({ error: error.message, storage: crawlStorage.getStatus() });
-  }
-});
-
-app.get('/api/crawler/history/compare', async (req, res) => {
-  const previousId = typeof req.query.previousId === 'string' ? req.query.previousId : '';
-  const currentId = typeof req.query.currentId === 'string' ? req.query.currentId : '';
-  if (!/^[a-f0-9-]{36}$/i.test(previousId) || !/^[a-f0-9-]{36}$/i.test(currentId)) {
-    return res.status(400).json({ error: 'Choose two valid saved crawls to compare.' });
-  }
-  try {
-    if (!(await hasCrawlAccess(req, previousId)) || !(await hasCrawlAccess(req, currentId))) {
-      return res.status(403).json({ error: 'You do not have access to compare one or both saved crawls.' });
-    }
-    return res.json(await crawlStorage.compareCrawls(previousId, currentId));
-  } catch (error) {
-    return res.status(500).json({ error: error.message || 'Could not compare the saved crawls.' });
-  }
-});
+// Persistent crawl history remains available after a deployment or process restart.
+registerCrawlHistoryListRoutes(app, { crawlStorage, getCrawlOwnerId, hasCrawlAccess });
 
 // Saved audits use small database-backed windows instead of sending every
 // stored page and LONGTEXT field to the browser in one restore response.
