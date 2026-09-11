@@ -15,6 +15,7 @@ import { SseHub } from './src/services/sse-hub.js';
 import { registerPublicRoutes } from './src/routes/public-routes.js';
 import { registerAdminManagementRoutes } from './src/routes/admin-management-routes.js';
 import { registerExportRoutes } from './src/routes/export-routes.js';
+import { registerCrawlerStatusRoutes } from './src/routes/crawler-status-routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -949,38 +950,7 @@ app.get('/api/debug/browser', requireAdmin, async (req, res) => {
 });
 
 // Status & Results
-app.get('/api/crawler/status', (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  if (!crawler) {
-    return res.json({ release: APP_RELEASE, isRunning: false, stats: null, resultsCount: 0, engine: null, capacity: getCrawlCapacity(), storage: crawlStorage.getStatus() });
-  }
-  res.json({
-    release: APP_RELEASE,
-    isRunning: crawler.isRunning,
-    isPaused: crawler.isPaused,
-    isStopping: crawler.isCancelled,
-    stats: crawler.stats,
-    lastError: crawler.lastError || null,
-    queueLength: crawler.queue.length,
-    resultsCount: crawler.results.length,
-    config: crawler.getConfigSummary(),
-    engine: crawler.getEngineStatus(),
-    capacity: getCrawlCapacity(),
-    storage: crawlStorage.getStatus()
-  });
-});
-
-app.get('/api/crawler/results', (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  if (!crawler) return res.json({ results: [] });
-  res.json({ results: crawler.results });
-});
-
-app.get('/api/crawler/links', (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  if (!crawler) return res.json({ links: [] });
-  res.json({ links: crawler.allLinks });
-});
+registerCrawlerStatusRoutes(app, { getSessionCrawler, getCrawlCapacity, crawlStorage, appRelease: APP_RELEASE });
 
 // Persistent crawl history. These routes remain available after a deployment or process restart.
 app.get('/api/crawler/history', async (req, res) => {
