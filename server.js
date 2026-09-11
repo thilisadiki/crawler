@@ -43,7 +43,9 @@ const APP_RELEASE = process.env.APP_RELEASE || 'concurrent-crawls-v4';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 const ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || '';
 const PRIVATE_ACCESS_CONFIGURED = Boolean(ADMIN_PASSWORD && ADMIN_SESSION_SECRET);
-const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+// Private, account-controlled access can remain signed in for a month. Logout,
+// administrator revocation, and account disablement still end a session immediately.
+const ADMIN_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const ADMIN_LOGIN_MAX_ATTEMPTS = 5;
 const ADMIN_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const ACTIVE_SESSION_WINDOW_MS = 2 * 60 * 1000;
