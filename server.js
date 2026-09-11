@@ -17,6 +17,7 @@ import { registerAdminManagementRoutes } from './src/routes/admin-management-rou
 import { registerExportRoutes } from './src/routes/export-routes.js';
 import { registerCrawlerStatusRoutes } from './src/routes/crawler-status-routes.js';
 import { registerCrawlHistoryListRoutes } from './src/routes/crawl-history-list-routes.js';
+import { registerHtmlComparisonRoute } from './src/routes/html-comparison-route.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -903,27 +904,7 @@ app.post('/api/crawler/reset', (req, res) => {
 // Captures source and rendered HTML only on demand. This avoids persisting
 // large documents for every page in an audit while still making DOM changes
 // inspectable from the dashboard.
-app.get('/api/crawler/page-html', async (req, res) => {
-  const { crawler } = getSessionCrawler(req);
-  const url = typeof req.query.url === 'string' ? req.query.url : '';
-  if (!crawler || !url) return res.status(400).json({ error: 'Choose an audited page before viewing its HTML.' });
-  if (crawler.isRunning) return res.status(409).json({ error: 'Wait for the crawl to finish before opening an HTML comparison.' });
-  let auditedPage = crawler.results.find(page => page.url === url);
-  if (!auditedPage && crawler.historyAudit?.crawlId) {
-    try {
-      auditedPage = await crawlStorage.getCrawlPage(crawler.historyAudit.crawlId, url);
-    } catch (error) {
-      return res.status(500).json({ error: error.message || 'Could not verify the saved page.' });
-    }
-  }
-  if (!auditedPage) return res.status(404).json({ error: 'That page is not part of this crawl session.' });
-
-  try {
-    return res.json(await crawler.captureHtmlComparison(auditedPage.url));
-  } catch (err) {
-    return res.status(500).json({ error: err instanceof Error ? err.message : 'Could not capture the HTML comparison.' });
-  }
-});
+registerHtmlComparisonRoute(app, { getSessionCrawler, crawlStorage });
 
 // Debug Diagnostic Endpoint
 app.get('/api/debug/browser', requireAdmin, async (req, res) => {
