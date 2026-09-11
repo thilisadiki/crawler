@@ -407,6 +407,43 @@ export class CrawlStorage {
     return true;
   }
 
+  async enableAuditor(id) {
+    if (!(await this.initialize()) || !this.pool) throw new Error('Persistent user storage is not connected.');
+    const [result] = await this.pool.execute(
+      `UPDATE app_users SET status = 'active', disabled_at = NULL
+       WHERE id = ? AND role = 'auditor' AND status = 'disabled'`,
+      [id]
+    );
+    if (!result.affectedRows) throw new Error('That auditor account is already active or no longer exists.');
+    return true;
+  }
+
+  async deleteAuditor(id) {
+    if (!(await this.initialize()) || !this.pool) throw new Error('Persistent user storage is not connected.');
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[auditor]] = await connection.execute(
+        `SELECT id, username FROM app_users
+         WHERE id = ? AND role = 'auditor' FOR UPDATE`,
+        [id]
+      );
+      if (!auditor) {
+        await connection.rollback();
+        throw new Error('That auditor account no longer exists.');
+      }
+      await connection.execute('DELETE FROM auth_sessions WHERE user_id = ?', [id]);
+      await connection.execute('DELETE FROM app_users WHERE id = ? AND role = \'auditor\'', [id]);
+      await connection.commit();
+      return { id: auditor.id, username: auditor.username };
+    } catch (error) {
+      await connection.rollback().catch(() => {});
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
   async updateCrawl(id, { status, stats = null, engine = null, started = false, completed = false }) {
     if (!this.pool) return;
     const updates = ['status = ?'];

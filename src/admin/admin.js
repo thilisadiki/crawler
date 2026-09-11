@@ -144,7 +144,13 @@ async function loadAuditors() {
     const response = await fetch('/api/admin/auditors', { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Could not load auditor accounts.');
-    auditorsTable.innerHTML = data.auditors.map(auditor => `<tr><td><code>${escapeHtml(auditor.username)}</code></td><td>Auditor</td><td><span class="session-status ${escapeHtml(String(auditor.status).toLowerCase())}">${escapeHtml(auditor.status)}</span></td><td>${escapeHtml(formatDate(auditor.createdAt))}</td><td>${escapeHtml(formatDate(auditor.lastLoginAt))}</td><td>${auditor.status === 'active' ? `<button class="revoke" type="button" data-auditor-id="${escapeHtml(auditor.id)}">Disable</button>` : '<span class="muted">—</span>'}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No auditor accounts have been created yet.</td></tr>';
+    auditorsTable.innerHTML = data.auditors.map(auditor => {
+      const id = escapeHtml(auditor.id);
+      const actions = auditor.status === 'active'
+        ? `<button class="revoke" type="button" data-auditor-id="${id}" data-auditor-action="disable">Disable</button>`
+        : `<button class="secondary compact-action" type="button" data-auditor-id="${id}" data-auditor-action="enable">Enable</button>`;
+      return `<tr><td><code>${escapeHtml(auditor.username)}</code></td><td>Auditor</td><td><span class="session-status ${escapeHtml(String(auditor.status).toLowerCase())}">${escapeHtml(auditor.status)}</span></td><td>${escapeHtml(formatDate(auditor.createdAt))}</td><td>${escapeHtml(formatDate(auditor.lastLoginAt))}</td><td><div class="auditor-actions">${actions}<button class="delete-auditor" type="button" data-auditor-id="${id}" data-auditor-action="delete">Delete</button></div></td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="muted">No auditor accounts have been created yet.</td></tr>';
     auditorsMessage.textContent = `${data.auditors.length} auditor account${data.auditors.length === 1 ? '' : 's'} found.`;
   } catch (error) {
     auditorsMessage.textContent = error.message;
@@ -201,12 +207,22 @@ createAuditorForm.addEventListener('submit', async event => {
 });
 auditorsTable.addEventListener('click', async event => {
   const button = event.target.closest('[data-auditor-id]');
-  if (!button || !window.confirm('Disable this auditor? Their active dashboard sessions will be revoked.')) return;
+  if (!button) return;
+  const action = button.dataset.auditorAction;
+  const prompts = {
+    disable: 'Disable this auditor? Their active dashboard sessions will be revoked.',
+    enable: 'Enable this auditor? They will be able to sign in again with their existing password.',
+    delete: 'Permanently delete this auditor account? Their sign-in and sessions will be removed. Saved crawls are retained in administrator history.'
+  };
+  if (!prompts[action] || !window.confirm(prompts[action])) return;
   button.disabled = true;
   try {
-    const response = await fetch(`/api/admin/auditors/${encodeURIComponent(button.dataset.auditorId)}/disable`, { method: 'POST' });
+    const response = await fetch(`/api/admin/auditors/${encodeURIComponent(button.dataset.auditorId)}/${action}`, { method: 'POST' });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Could not disable auditor account.');
+    if (!response.ok) throw new Error(data.error || `Could not ${action} auditor account.`);
+    auditorsMessage.textContent = action === 'delete'
+      ? `Auditor “${data.deleted?.username || 'account'}” was permanently deleted.`
+      : action === 'enable' ? 'Auditor account enabled.' : 'Auditor account disabled.';
     await loadAuditors();
   } catch (error) {
     auditorsMessage.textContent = error.message;

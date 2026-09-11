@@ -9,6 +9,17 @@ export function registerAdminManagementRoutes(app, dependencies) {
     activeSessionWindowMs, sessionActivityRetentionMs
   } = dependencies;
 
+  function revokeAuditorLiveAccess(userId, { removeSessionRecords = false } = {}) {
+    for (const [sessionId, session] of auditorSessions) {
+      if (session.userId !== userId) continue;
+      if (removeSessionRecords) auditorSessions.delete(sessionId);
+      else session.revokedAt = Date.now();
+    }
+    for (const [dashboardId, session] of dashboardSessions) {
+      if (session.ownerRole === 'Auditor' && session.ownerUserId === userId) revokeDashboardSession(dashboardId);
+    }
+  }
+
   app.get('/api/admin/database-overview', requireAdmin, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     try {
@@ -63,16 +74,36 @@ export function registerAdminManagementRoutes(app, dependencies) {
     try {
       await crawlStorage.disableAuditor(userId);
       await crawlStorage.revokeAuthSessionsForUser(userId);
-      for (const session of auditorSessions.values()) {
-        if (session.userId === userId) session.revokedAt = Date.now();
-      }
-      for (const [dashboardId, session] of dashboardSessions) {
-        if (session.ownerRole === 'Auditor' && session.ownerUserId === userId) revokeDashboardSession(dashboardId);
-      }
+      revokeAuditorLiveAccess(userId);
       auditSecurityEvent(req, 'auditor.disabled', 'success', { userIdSuffix: userId.slice(-4) }, { adminSession: getAdminSession(req, false) });
       res.json({ success: true });
     } catch (error) {
       res.status(503).json({ error: error.message || 'Could not disable the auditor account.' });
+    }
+  });
+
+  app.post('/api/admin/auditors/:userId/enable', requireAdmin, requireSameOrigin, async (req, res) => {
+    const userId = req.params.userId;
+    if (!/^[a-f0-9-]{36}$/i.test(userId)) return res.status(400).json({ error: 'Invalid auditor identifier.' });
+    try {
+      await crawlStorage.enableAuditor(userId);
+      auditSecurityEvent(req, 'auditor.enabled', 'success', { userIdSuffix: userId.slice(-4) }, { adminSession: getAdminSession(req, false) });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(503).json({ error: error.message || 'Could not enable the auditor account.' });
+    }
+  });
+
+  app.post('/api/admin/auditors/:userId/delete', requireAdmin, requireSameOrigin, async (req, res) => {
+    const userId = req.params.userId;
+    if (!/^[a-f0-9-]{36}$/i.test(userId)) return res.status(400).json({ error: 'Invalid auditor identifier.' });
+    try {
+      const deleted = await crawlStorage.deleteAuditor(userId);
+      revokeAuditorLiveAccess(userId, { removeSessionRecords: true });
+      auditSecurityEvent(req, 'auditor.deleted', 'success', { username: deleted.username, userIdSuffix: userId.slice(-4) }, { adminSession: getAdminSession(req, false) });
+      res.json({ success: true, deleted: { username: deleted.username } });
+    } catch (error) {
+      res.status(503).json({ error: error.message || 'Could not delete the auditor account.' });
     }
   });
 

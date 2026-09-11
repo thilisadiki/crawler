@@ -15,7 +15,7 @@
   <main>
     <section class="panel overview">
       <div class="section-head"><h2>Auditor accounts</h2><button id="refreshAuditors" class="secondary" type="button">Refresh</button></div>
-      <p class="muted">Auditors have their own sign-in and can run crawls, view saved audits, and export reports. They cannot open this administration page or change users, sessions, or stored data.</p>
+      <p class="muted">Auditors have their own sign-in and can run crawls, view saved audits, and export reports. They cannot open this administration page or change users, sessions, or stored data. Disable temporarily blocks access; Enable restores it. Delete permanently removes the account and its sessions, while saved crawls remain available to administrators.</p>
       <form id="createAuditorForm" class="auditor-form">
         <label for="auditorUsername">Username<input id="auditorUsername" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="e.g. jane.audit" required></label>
         <label for="auditorPassword">Password<input id="auditorPassword" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
