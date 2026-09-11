@@ -62,6 +62,7 @@ export function registerAdminManagementRoutes(app, dependencies) {
     if (!/^[a-f0-9-]{36}$/i.test(userId)) return res.status(400).json({ error: 'Invalid auditor identifier.' });
     try {
       await crawlStorage.disableAuditor(userId);
+      await crawlStorage.revokeAuthSessionsForUser(userId);
       for (const session of auditorSessions.values()) {
         if (session.userId === userId) session.revokedAt = Date.now();
       }
@@ -137,7 +138,7 @@ export function registerAdminManagementRoutes(app, dependencies) {
     res.json({ sessions, activeWindowSeconds: activeSessionWindowMs / 1000, retentionDays: sessionActivityRetentionMs / (24 * 60 * 60 * 1000) });
   });
 
-  app.post('/api/admin/sessions/:sessionId/revoke', requireAdmin, requireSameOrigin, (req, res) => {
+  app.post('/api/admin/sessions/:sessionId/revoke', requireAdmin, requireSameOrigin, async (req, res) => {
     const sessionId = req.params.sessionId;
     if (!/^[a-zA-Z0-9_-]{8,128}$/.test(sessionId)) return res.status(400).json({ error: 'Invalid session identifier.' });
     const currentAdminSession = getAdminSession(req, false);
@@ -145,12 +146,14 @@ export function registerAdminManagementRoutes(app, dependencies) {
     if (adminSession) {
       if (adminSession.id === currentAdminSession?.id) return res.status(400).json({ error: 'Use Sign out to end your current administrator session.' });
       adminSession.revokedAt = Date.now();
+      await crawlStorage.revokeAuthSession(adminSession.id);
       auditSecurityEvent(req, 'session.revoked', 'success', { sessionType: 'Administrator', sessionIdSuffix: sessionId.slice(-4) }, { adminSession: currentAdminSession });
       return res.json({ success: true, type: 'Administrator' });
     }
     const auditorSession = auditorSessions.get(sessionId);
     if (auditorSession) {
       auditorSession.revokedAt = Date.now();
+      await crawlStorage.revokeAuthSession(auditorSession.id);
       for (const [dashboardId, dashboard] of dashboardSessions) {
         if (dashboard.ownerRole === 'Auditor' && dashboard.ownerSessionId === auditorSession.id) revokeDashboardSession(dashboardId);
       }

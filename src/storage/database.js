@@ -192,6 +192,28 @@ export class CrawlStorage {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    // Authentication cookies only contain a signed reference. The session
+    // record lives here so a Node process restart does not sign everyone out.
+    // Revocation and expiry remain server-enforced on every authenticated call.
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        id CHAR(36) NOT NULL PRIMARY KEY,
+        role VARCHAR(24) NOT NULL,
+        user_id CHAR(36) NULL,
+        username VARCHAR(64) NULL,
+        ip_address VARCHAR(64) NULL,
+        user_agent VARCHAR(512) NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME NOT NULL,
+        revoked_at DATETIME NULL,
+        ended_at DATETIME NULL,
+        INDEX idx_auth_sessions_last_seen_at (last_seen_at),
+        INDEX idx_auth_sessions_user_id (user_id),
+        INDEX idx_auth_sessions_active (role, expires_at, revoked_at, ended_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     try {
       await this.pool.query('ALTER TABLE crawl_pages ADD COLUMN images_json JSON NULL');
     } catch (error) {
@@ -261,6 +283,93 @@ export class CrawlStorage {
       if (error.code === 'ER_DUP_ENTRY') throw new Error('That username is already in use.');
       throw error;
     }
+  }
+
+  async createAuthSession(session) {
+    if (!(await this.initialize()) || !this.pool) return false;
+    await this.pool.execute(
+      `INSERT INTO auth_sessions (
+        id, role, user_id, username, ip_address, user_agent,
+        created_at, last_seen_at, expires_at, revoked_at, ended_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        session.id,
+        session.role,
+        nullable(session.userId),
+        nullable(session.username),
+        nullable(session.ip),
+        nullable(session.userAgent),
+        new Date(session.createdAt),
+        new Date(session.lastSeenAt),
+        new Date(session.expiresAt),
+        session.revokedAt ? new Date(session.revokedAt) : null,
+        session.endedAt ? new Date(session.endedAt) : null
+      ]
+    );
+    return true;
+  }
+
+  async listAuthSessions(retentionSince, limit = 100) {
+    if (!(await this.initialize()) || !this.pool) return [];
+    const pageSize = Math.min(Math.max(Number.parseInt(limit, 10) || 100, 1), 500);
+    const [rows] = await this.pool.execute(
+      `SELECT id, role, user_id AS userId, username, ip_address AS ip, user_agent AS userAgent,
+              created_at AS createdAt, last_seen_at AS lastSeenAt, expires_at AS expiresAt,
+              revoked_at AS revokedAt, ended_at AS endedAt
+       FROM auth_sessions
+       WHERE last_seen_at >= ? OR created_at >= ?
+       ORDER BY last_seen_at DESC
+       LIMIT ?`,
+      [new Date(retentionSince), new Date(retentionSince), pageSize]
+    );
+    return rows.map(row => ({ ...row }));
+  }
+
+  async touchAuthSession(id) {
+    if (!(await this.initialize()) || !this.pool) return false;
+    const [result] = await this.pool.execute(
+      `UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND revoked_at IS NULL AND ended_at IS NULL AND expires_at > CURRENT_TIMESTAMP`,
+      [id]
+    );
+    return Boolean(result.affectedRows);
+  }
+
+  async endAuthSession(id) {
+    if (!(await this.initialize()) || !this.pool) return false;
+    const [result] = await this.pool.execute(
+      'UPDATE auth_sessions SET ended_at = COALESCE(ended_at, CURRENT_TIMESTAMP) WHERE id = ?',
+      [id]
+    );
+    return Boolean(result.affectedRows);
+  }
+
+  async revokeAuthSession(id) {
+    if (!(await this.initialize()) || !this.pool) return false;
+    const [result] = await this.pool.execute(
+      'UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP) WHERE id = ?',
+      [id]
+    );
+    return Boolean(result.affectedRows);
+  }
+
+  async revokeAuthSessionsForUser(userId) {
+    if (!(await this.initialize()) || !this.pool) return 0;
+    const [result] = await this.pool.execute(
+      `UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP)
+       WHERE user_id = ? AND role = 'Auditor' AND revoked_at IS NULL AND ended_at IS NULL`,
+      [userId]
+    );
+    return Number(result.affectedRows || 0);
+  }
+
+  async pruneAuthSessions(retentionSince) {
+    if (!(await this.initialize()) || !this.pool) return 0;
+    const [result] = await this.pool.execute(
+      'DELETE FROM auth_sessions WHERE last_seen_at < ? AND created_at < ?',
+      [new Date(retentionSince), new Date(retentionSince)]
+    );
+    return Number(result.affectedRows || 0);
   }
 
   async findActiveAuditor(username) {
@@ -1004,6 +1113,7 @@ export class CrawlStorage {
         (SELECT COUNT(*) FROM crawl_pages) AS pages,
         (SELECT COUNT(*) FROM crawl_links) AS links,
         (SELECT COUNT(*) FROM security_events) AS securityEvents,
+        (SELECT COUNT(*) FROM auth_sessions) AS authSessions,
         (SELECT COALESCE(SUM(JSON_LENGTH(resources_json)), 0) FROM crawl_pages) AS resources,
         (SELECT COALESCE(SUM(CHAR_LENGTH(full_page_text)), 0) FROM crawl_pages) AS fullPageTextChars,
         (SELECT COALESCE(SUM(CHAR_LENGTH(custom_text)), 0) FROM crawl_pages) AS contentAreaTextChars,
@@ -1019,7 +1129,7 @@ export class CrawlStorage {
         COALESCE(data_length, 0) + COALESCE(index_length, 0) AS totalBytes
       FROM information_schema.tables
       WHERE table_schema = DATABASE()
-        AND table_name IN ('crawl_runs', 'crawl_pages', 'crawl_links', 'security_events', 'app_users')
+        AND table_name IN ('crawl_runs', 'crawl_pages', 'crawl_links', 'security_events', 'app_users', 'auth_sessions')
       ORDER BY table_name
     `);
     const [[latestCrawl]] = await this.pool.query(`

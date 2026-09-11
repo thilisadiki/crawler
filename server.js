@@ -52,6 +52,8 @@ const MAX_SESSION_RECORDS = 100;
 const adminLoginAttempts = new Map();
 const adminSessions = new Map();
 const auditorSessions = new Map();
+let persistentSessionsLoaded = false;
+let sessionHydrationPromise = null;
 const scryptAsync = promisify(scrypt);
 const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://workva.co.za').replace(/\/$/, '');
 const crawlNetworkPolicy = new CrawlNetworkPolicy();
@@ -144,9 +146,77 @@ function pruneSessionRecords() {
         .forEach(([id]) => sessions.delete(id));
     }
   }
+  void crawlStorage.pruneAuthSessions(cutoff).catch(error => console.error('Could not prune retained authentication sessions:', error.message));
 }
 
-function createAdminSession(req) {
+function timestamp(value) {
+  const parsed = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function restorePersistentSession(record) {
+  const session = {
+    id: record.id,
+    userId: record.userId || null,
+    username: record.username || null,
+    createdAt: timestamp(record.createdAt),
+    lastSeenAt: timestamp(record.lastSeenAt),
+    expiresAt: timestamp(record.expiresAt),
+    revokedAt: record.revokedAt ? timestamp(record.revokedAt) : null,
+    endedAt: record.endedAt ? timestamp(record.endedAt) : null,
+    ip: record.ip || 'Unknown',
+    userAgent: record.userAgent || 'Unknown user agent'
+  };
+  if (record.role === 'Administrator') adminSessions.set(session.id, session);
+  if (record.role === 'Auditor') auditorSessions.set(session.id, session);
+}
+
+async function ensurePersistentSessionsLoaded() {
+  if (persistentSessionsLoaded) return;
+  if (sessionHydrationPromise) return sessionHydrationPromise;
+  sessionHydrationPromise = (async () => {
+    const connected = await crawlStorage.initialize();
+    if (!connected) {
+      persistentSessionsLoaded = true;
+      return;
+    }
+    const cutoff = Date.now() - SESSION_ACTIVITY_RETENTION_MS;
+    const records = await crawlStorage.listAuthSessions(cutoff, MAX_SESSION_RECORDS);
+    for (const record of records) restorePersistentSession(record);
+    await crawlStorage.pruneAuthSessions(cutoff);
+    persistentSessionsLoaded = true;
+  })().catch(error => {
+    console.error('Could not restore authentication sessions:', error.message);
+    // Authentication continues in memory if storage is temporarily unavailable.
+    persistentSessionsLoaded = true;
+  }).finally(() => {
+    sessionHydrationPromise = null;
+  });
+  return sessionHydrationPromise;
+}
+
+async function rememberSession(session, role) {
+  const sessions = role === 'Administrator' ? adminSessions : auditorSessions;
+  sessions.set(session.id, session);
+  try {
+    await crawlStorage.createAuthSession({ ...session, role });
+  } catch (error) {
+    console.error('Could not persist authentication session:', error.message);
+  }
+}
+
+function touchSession(session) {
+  session.lastSeenAt = Date.now();
+  void crawlStorage.touchAuthSession(session.id).catch(error => console.error('Could not update authentication session activity:', error.message));
+}
+
+async function endSession(session) {
+  if (!session || session.endedAt) return;
+  session.endedAt = Date.now();
+  await crawlStorage.endAuthSession(session.id).catch(error => console.error('Could not end authentication session:', error.message));
+}
+
+async function createAdminSession(req) {
   pruneSessionRecords();
   const id = randomUUID();
   const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
@@ -158,12 +228,12 @@ function createAdminSession(req) {
     ip: getClientIp(req),
     userAgent: req.get('user-agent') || 'Unknown user agent'
   };
-  adminSessions.set(id, session);
+  await rememberSession(session, 'Administrator');
   const payload = Buffer.from(JSON.stringify({ id, exp: expiresAt })).toString('base64url');
   return { token: `${payload}.${signAdminPayload(payload)}`, session };
 }
 
-function createAuditorSession(req, user) {
+async function createAuditorSession(req, user) {
   pruneSessionRecords();
   const id = randomUUID();
   const expiresAt = Date.now() + ADMIN_SESSION_TTL_MS;
@@ -177,7 +247,7 @@ function createAuditorSession(req, user) {
     ip: getClientIp(req),
     userAgent: req.get('user-agent') || 'Unknown user agent'
   };
-  auditorSessions.set(id, session);
+  await rememberSession(session, 'Auditor');
   const payload = Buffer.from(JSON.stringify({ id, exp: expiresAt })).toString('base64url');
   return { token: `${payload}.${signAdminPayload(payload)}`, session };
 }
@@ -196,7 +266,7 @@ function getAdminSession(req, touch = true) {
     const { id, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
     const session = typeof id === 'string' ? adminSessions.get(id) : null;
     if (!session || session.revokedAt || session.endedAt || !Number.isFinite(exp) || exp <= Date.now() || session.expiresAt <= Date.now()) return false;
-    if (touch) session.lastSeenAt = Date.now();
+    if (touch) touchSession(session);
     return session;
   } catch {
     return false;
@@ -217,7 +287,7 @@ function getAuditorSession(req, touch = true) {
     const { id, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
     const session = typeof id === 'string' ? auditorSessions.get(id) : null;
     if (!session || session.revokedAt || session.endedAt || !Number.isFinite(exp) || exp <= Date.now() || session.expiresAt <= Date.now()) return false;
-    if (touch) session.lastSeenAt = Date.now();
+    if (touch) touchSession(session);
     return session;
   } catch {
     return false;
@@ -250,7 +320,9 @@ async function hasCrawlAccess(req, crawlId) {
 // block a login, crawl, or emergency session revocation. Metadata excludes
 // passwords, cookies, and all other credentials.
 function auditSecurityEvent(req, eventType, outcome = 'success', metadata = {}, context = {}) {
-  const adminSession = context.adminSession || getAdminSession(req, false);
+  const adminSession = context.adminSession || (req.dashboardPrincipal?.role === 'Administrator'
+    ? req.dashboardPrincipal.session
+    : getAdminSession(req, false));
   const dashboardSession = context.dashboardSession || req.dashboardSession;
   crawlStorage.recordSecurityEvent({
     eventType,
@@ -311,15 +383,17 @@ function clearAuditorCookieOptions(req) {
   return { ...clearAdminCookieOptions(req) };
 }
 
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
   if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).json({ error: 'Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET.' });
+  await ensurePersistentSessionsLoaded();
   if (!hasValidAdminSession(req)) return res.status(401).json({ error: 'Administrator login required.' });
   res.setHeader('Cache-Control', 'no-store');
   return next();
 }
 
-function requireDashboardUser(req, res, next) {
+async function requireDashboardUser(req, res, next) {
   if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).json({ error: 'Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET.' });
+  await ensurePersistentSessionsLoaded();
   const principal = getDashboardPrincipal(req);
   if (!principal) return res.status(401).json({ error: 'Sign in is required.' });
   req.dashboardPrincipal = principal;
@@ -350,12 +424,13 @@ function requireSameOrigin(req, res, next) {
   return next();
 }
 
-function requireDashboardAccess(req, res, next) {
+async function requireDashboardAccess(req, res, next) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
   if (!PRIVATE_ACCESS_CONFIGURED) {
     return res.status(503).type('text/plain').send('CrawlLoom private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
   }
+  await ensurePersistentSessionsLoaded();
   if (!hasValidDashboardAccess(req)) {
     return res.redirect(`/admin/login?next=${encodeURIComponent(safeNextPath(req.originalUrl))}`);
   }
@@ -419,8 +494,9 @@ app.get('/admin/login.js', sendAdminAsset('login.js'));
 app.get('/admin/admin.css', requireAdmin, sendAdminAsset('admin.css'));
 app.get('/admin/admin.js', requireAdmin, sendAdminAsset('admin.js'));
 
-app.get('/admin/login', (req, res) => {
+app.get('/admin/login', async (req, res) => {
   if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).type('text/plain').send('Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
+  await ensurePersistentSessionsLoaded();
   const principal = getDashboardPrincipal(req);
   if (principal) {
     const requested = safeNextPath(req.query.next, '/app');
@@ -430,21 +506,24 @@ app.get('/admin/login', (req, res) => {
   return res.sendFile(path.join(__dirname, 'src', 'admin', 'login.html'));
 });
 
-app.get('/admin', (req, res) => {
+app.get('/admin', async (req, res) => {
   if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).type('text/plain').send('Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET in the hosting environment.');
+  await ensurePersistentSessionsLoaded();
   if (!hasValidAdminSession(req)) return res.redirect('/admin/login?next=/admin');
   res.setHeader('Cache-Control', 'no-store');
   return res.sendFile(path.join(__dirname, 'src', 'admin', 'index.html'));
 });
 
-app.get('/api/admin/session', (req, res) => {
+app.get('/api/admin/session', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
+  await ensurePersistentSessionsLoaded();
   const principal = getDashboardPrincipal(req, false);
   res.json({ configured: PRIVATE_ACCESS_CONFIGURED, authenticated: Boolean(principal), administrator: principal?.role === 'Administrator', role: principal?.role || null });
 });
 
 app.post('/api/admin/login', requireSameOrigin, async (req, res) => {
   if (!PRIVATE_ACCESS_CONFIGURED) return res.status(503).json({ error: 'Private access is not configured. Set ADMIN_PASSWORD and ADMIN_SESSION_SECRET.' });
+  await ensurePersistentSessionsLoaded();
   const { key, attempt } = getLoginAttempt(req);
   if (attempt.count >= ADMIN_LOGIN_MAX_ATTEMPTS) {
     const retryAfterSeconds = Math.max(1, Math.ceil((attempt.resetAt - Date.now()) / 1000));
@@ -476,26 +555,26 @@ app.post('/api/admin/login', requireSameOrigin, async (req, res) => {
     // A browser can only operate as one account at a time. Clearing an owner
     // cookie here prevents a test sign-in from silently retaining owner access.
     const existingAdmin = getAdminSession(req, false);
-    if (existingAdmin) existingAdmin.endedAt = Date.now();
+    await endSession(existingAdmin);
     res.clearCookie('omnicrawl_admin', clearAdminCookieOptions(req));
-    const created = createAuditorSession(req, auditor);
+    const created = await createAuditorSession(req, auditor);
     await crawlStorage.markAuditorLoggedIn(auditor.id).catch(() => {});
     auditSecurityEvent(req, 'auditor.login', 'success', { username: auditor.username });
     res.cookie('omnicrawl_auditor', created.token, auditorCookieOptions(req));
     return res.json({ success: true, role: 'Auditor' });
   }
   const existingAuditor = getAuditorSession(req, false);
-  if (existingAuditor) existingAuditor.endedAt = Date.now();
+  await endSession(existingAuditor);
   res.clearCookie('omnicrawl_auditor', clearAuditorCookieOptions(req));
-  const created = createAdminSession(req);
+  const created = await createAdminSession(req);
   auditSecurityEvent(req, 'admin.login', 'success', {}, { adminSession: created.session });
   res.cookie('omnicrawl_admin', created.token, adminCookieOptions(req));
   return res.json({ success: true, role: 'Administrator' });
 });
 
-app.post('/api/admin/logout', requireAdmin, requireSameOrigin, (req, res) => {
+app.post('/api/admin/logout', requireAdmin, requireSameOrigin, async (req, res) => {
   const session = getAdminSession(req, false);
-  if (session) session.endedAt = Date.now();
+  await endSession(session);
   auditSecurityEvent(req, 'admin.logout', 'success', {}, { adminSession: session });
   res.clearCookie('omnicrawl_admin', clearAdminCookieOptions(req));
   res.json({ success: true });
@@ -515,7 +594,7 @@ registerAdminManagementRoutes(app, {
 // dashboard session is revoked, allowing the account to resume later.
 app.post('/api/access/logout', requireDashboardUser, requireSameOrigin, async (req, res) => {
   const principal = req.dashboardPrincipal;
-  principal.session.endedAt = Date.now();
+  await endSession(principal.session);
   for (const [dashboardId, dashboard] of dashboardSessions) {
     if (dashboard.ownerRole !== principal.role || dashboard.ownerSessionId !== principal.id) continue;
     const crawlerRecord = crawlCoordinator.get(dashboardId);
