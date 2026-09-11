@@ -2,8 +2,7 @@
 export function registerCrawlHistoryListRoutes(app, { crawlStorage, getCrawlOwnerId, hasCrawlAccess }) {
   app.get('/api/crawler/history', async (req, res) => {
     try {
-      const isAdmin = req.dashboardPrincipal?.role === 'Administrator';
-      const crawls = await crawlStorage.listCrawls(req.query.limit, getCrawlOwnerId(req.dashboardPrincipal), isAdmin);
+      const crawls = await crawlStorage.listCrawls(req.query.limit, getCrawlOwnerId(req.dashboardPrincipal));
       res.json({ storage: crawlStorage.getStatus(), crawls });
     } catch (error) {
       res.status(500).json({ error: error.message, storage: crawlStorage.getStatus() });

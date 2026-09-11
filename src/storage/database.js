@@ -400,12 +400,10 @@ export class CrawlStorage {
     }
   }
 
-  async listCrawls(limit = 25, ownerUserId = null, isAdmin = false) {
+  async listCrawls(limit = 25, ownerUserId = null) {
     if (!(await this.initialize())) return [];
-    const ownerFilter = isAdmin
-      ? 'WHERE (owner_user_id = ? OR owner_user_id IS NULL)'
-      : ownerUserId ? 'WHERE owner_user_id = ?' : '';
-    const queryValues = (isAdmin || ownerUserId)
+    const ownerFilter = ownerUserId ? 'WHERE owner_user_id = ?' : '';
+    const queryValues = ownerUserId
       ? [ownerUserId, Math.min(Math.max(Number.parseInt(limit, 10) || 25, 1), 100)]
       : [Math.min(Math.max(Number.parseInt(limit, 10) || 25, 1), 100)];
     const [rows] = await this.pool.execute(

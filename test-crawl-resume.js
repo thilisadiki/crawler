@@ -148,7 +148,7 @@ test('CrawlCoordinator owns an active crawl lifecycle and releases its slot when
   assert.equal(saved.some(([type]) => type === 'crawl'), true);
 });
 
-test('CrawlStorage listCrawls supports isAdmin filter for legacy crawls', async () => {
+test('CrawlStorage listCrawls scopes dashboard history to the supplied account owner', async () => {
   const storage = new CrawlStorage();
   let executedSql = '';
   storage.pool = {
@@ -160,12 +160,11 @@ test('CrawlStorage listCrawls supports isAdmin filter for legacy crawls', async 
   storage.isConfigured = true;
   storage.initPromise = Promise.resolve(true);
 
-  // Admin query should match owner_user_id or NULL
-  await storage.listCrawls(25, 'administrator', true);
-  assert.match(executedSql, /WHERE \(owner_user_id = \? OR owner_user_id IS NULL\)/);
+  await storage.listCrawls(25, 'administrator');
+  assert.match(executedSql, /WHERE owner_user_id = \?/);
+  assert.doesNotMatch(executedSql, /IS NULL/);
 
-  // Auditor query should only match their specific owner_user_id
-  await storage.listCrawls(25, 'auditor-123', false);
+  await storage.listCrawls(25, 'auditor-123');
   assert.match(executedSql, /WHERE owner_user_id = \?/);
   assert.doesNotMatch(executedSql, /IS NULL/);
 });

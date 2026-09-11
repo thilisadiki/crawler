@@ -238,8 +238,7 @@ function getCrawlOwnerId(principal) {
 
 function canAccessCrawl(req, crawl) {
   if (!crawl) return false;
-  return crawl.ownerUserId === getCrawlOwnerId(req.dashboardPrincipal)
-    || (req.dashboardPrincipal?.role === 'Administrator' && !crawl.ownerUserId);
+  return crawl.ownerUserId === getCrawlOwnerId(req.dashboardPrincipal);
 }
 
 async function hasCrawlAccess(req, crawlId) {
