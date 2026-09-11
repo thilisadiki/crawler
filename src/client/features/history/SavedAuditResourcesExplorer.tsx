@@ -56,7 +56,6 @@ export function SavedAuditResourcesExplorer({ crawlId, sharedSearch }: { crawlId
   function header(label: string, key: SortKey) { return <th scope="col"><button className="sort-button" onClick={() => changeSort(key)}>{label} <span>{sort.key === key ? (sort.direction === 'asc' ? '▲' : '▼') : '↕'}</span></button></th>; }
 
   return <>
-    <p className="saved-audit-window-note">Saved audit view: resources are queried from MySQL in small windows, so the complete asset inventory remains available for large audits.</p>
     <div className="sub-tabs" aria-label="Saved audit resource filters">{FILTERS.map(([value, label]) => <button key={value} className={filter === value ? 'pill active' : 'pill'} onClick={() => selectFilter(value)}>{label} ({counts[value]})</button>)}</div>
     {error && <p className="error-message">{error}</p>}
     <div className="table-wrap"><table><thead><tr>{header('#', 'index')}{header('Type', 'type')}{header('Resource URL', 'url')}{header('Status', 'status')}{header('Size', 'size')}{header('Source page', 'source')}<th>Action</th></tr></thead><tbody>
