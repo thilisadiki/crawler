@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { crawlerClient } from '../../api/crawler-client';
 import type { CrawlHistoryPageWindow, CrawlPage } from '../../types/crawl';
 import '../pages/pages.css';
+import { getSavedAuditWindow, loadSavedAuditWindow } from './saved-audit-cache';
 
 type PageTab = 'all' | 'title' | 'description' | 'keywords' | 'h1' | 'h2' | 'content';
 type PageFilter = 'all' | '200' | 'content' | 'missing' | 'errors';
 type SortKey = 'index' | 'status' | 'url' | 'value' | 'length' | 'content' | 'links' | 'latency';
 
 const TABS: Array<[PageTab, string]> = [['all', 'All pages'], ['title', 'Page title'], ['description', 'Meta description'], ['keywords', 'Meta keywords'], ['h1', 'H1'], ['h2', 'H2'], ['content', 'Content']];
+const INITIAL_WINDOW_OPTIONS = { offset: 0, limit: 50, tab: 'all', filter: 'all', sort: 'index', direction: 'asc', query: '' };
 
 function valueFor(page: CrawlPage, tab: PageTab) {
   if (tab === 'all' || tab === 'title') return page.title || '';
@@ -31,18 +33,24 @@ export function SavedAuditPagesExplorer({ crawlId, sharedSearch, onInspectPage }
   const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'index', direction: 'asc' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [pageWindow, setPageWindow] = useState<CrawlHistoryPageWindow | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [pageWindow, setPageWindow] = useState<CrawlHistoryPageWindow | null>(() => getSavedAuditWindow('pages', crawlId, INITIAL_WINDOW_OPTIONS) || null);
+  const [loading, setLoading] = useState(() => !getSavedAuditWindow('pages', crawlId, INITIAL_WINDOW_OPTIONS));
   const [error, setError] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
+    const options = {
+      offset: (page - 1) * pageSize, limit: pageSize, tab, filter, sort: sort.key, direction: sort.direction, query: sharedSearch.trim()
+    };
+    const cached = getSavedAuditWindow<CrawlHistoryPageWindow>('pages', crawlId, options);
+    if (cached) {
+      setPageWindow(cached); setLoading(false); setError(null);
+      return () => controller.abort();
+    }
     const timer = window.setTimeout(() => {
       setLoading(true); setError(null);
-      void crawlerClient.historyPages(crawlId, {
-        offset: (page - 1) * pageSize, limit: pageSize, tab, filter, sort: sort.key, direction: sort.direction, query: sharedSearch.trim()
-      }).then(result => {
+      void loadSavedAuditWindow('pages', crawlId, options, () => crawlerClient.historyPages(crawlId, options)).then(result => {
         if (!controller.signal.aborted) setPageWindow(result);
       }).catch(reason => {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Could not load saved audit pages.');

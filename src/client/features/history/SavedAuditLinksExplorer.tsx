@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { crawlerClient } from '../../api/crawler-client';
 import type { CrawlHistoryLinkWindow, CrawledLink } from '../../types/crawl';
 import '../links/links.css';
+import { getSavedAuditWindow, loadSavedAuditWindow } from './saved-audit-cache';
 
 type LinkFilter = 'all' | 'internal' | 'external' | 'redirects' | 'in-content' | '200' | 'errors' | 'nofollow';
 type SortKey = 'index' | 'status' | 'anchor' | 'destination' | 'type' | 'content' | 'nofollow' | 'source';
 const FILTERS: Array<[LinkFilter, string]> = [['all', 'All links'], ['internal', 'Internal'], ['external', 'External'], ['redirects', 'Redirects'], ['in-content', 'In content area'], ['200', '200 OK'], ['errors', 'Errors & broken'], ['nofollow', 'Nofollow']];
+const INITIAL_WINDOW_OPTIONS = { offset: 0, limit: 50, filter: 'all', sort: 'index', direction: 'asc', query: '' };
 function destination(link: CrawledLink) { return link.targetUrl || link.url || ''; }
 function redirects(link: CrawledLink) { return link.redirectCount || link.redirectChain?.length || 0; }
 
@@ -14,14 +16,20 @@ export function SavedAuditLinksExplorer({ crawlId, sharedSearch }: { crawlId: st
   const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'index', direction: 'asc' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [linkWindow, setLinkWindow] = useState<CrawlHistoryLinkWindow | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [linkWindow, setLinkWindow] = useState<CrawlHistoryLinkWindow | null>(() => getSavedAuditWindow('links', crawlId, INITIAL_WINDOW_OPTIONS) || null);
+  const [loading, setLoading] = useState(() => !getSavedAuditWindow('links', crawlId, INITIAL_WINDOW_OPTIONS));
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController();
+    const options = { offset: (page - 1) * pageSize, limit: pageSize, filter, sort: sort.key, direction: sort.direction, query: sharedSearch.trim() };
+    const cached = getSavedAuditWindow<CrawlHistoryLinkWindow>('links', crawlId, options);
+    if (cached) {
+      setLinkWindow(cached); setLoading(false); setError(null);
+      return () => controller.abort();
+    }
     const timer = window.setTimeout(() => {
       setLoading(true); setError(null);
-      void crawlerClient.historyLinks(crawlId, { offset: (page - 1) * pageSize, limit: pageSize, filter, sort: sort.key, direction: sort.direction, query: sharedSearch.trim() })
+      void loadSavedAuditWindow('links', crawlId, options, () => crawlerClient.historyLinks(crawlId, options))
         .then(result => { if (!controller.signal.aborted) setLinkWindow(result); })
         .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Could not load saved audit links.'); })
         .finally(() => { if (!controller.signal.aborted) setLoading(false); });

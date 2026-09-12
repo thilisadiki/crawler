@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { crawlerClient } from '../../api/crawler-client';
 import type { CrawlHistoryResourceWindow, CrawledResource } from '../../types/crawl';
 import { formatBytes, ResourceInspector } from '../resources/ResourcesExplorer';
+import { getSavedAuditWindow, loadSavedAuditWindow } from './saved-audit-cache';
 
 type ResourceFilter = 'all' | 'stylesheet' | 'script' | 'image' | 'media-font' | 'loaded' | 'blocked' | 'errors';
 type SortKey = 'index' | 'type' | 'url' | 'status' | 'size' | 'source';
@@ -10,6 +11,7 @@ const FILTERS: Array<[ResourceFilter, string]> = [
   ['all', 'All'], ['stylesheet', 'CSS'], ['script', 'JavaScript'], ['image', 'Images'], ['media-font', 'Media & fonts'],
   ['loaded', 'Loaded'], ['blocked', 'Blocked'], ['errors', 'Errors']
 ];
+const INITIAL_WINDOW_OPTIONS = { offset: 0, limit: 50, filter: 'all', sort: 'index', direction: 'asc', query: '' };
 
 function isLoaded(resource: CrawledResource) {
   return resource.discoveryStatus === 'Loaded' || ((resource.statusCode || 0) >= 200 && (resource.statusCode || 0) < 400);
@@ -24,18 +26,22 @@ export function SavedAuditResourcesExplorer({ crawlId, sharedSearch }: { crawlId
   const [sort, setSort] = useState<{ key: SortKey; direction: 'asc' | 'desc' }>({ key: 'index', direction: 'asc' });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [resourceWindow, setResourceWindow] = useState<CrawlHistoryResourceWindow | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [resourceWindow, setResourceWindow] = useState<CrawlHistoryResourceWindow | null>(() => getSavedAuditWindow('resources', crawlId, INITIAL_WINDOW_OPTIONS) || null);
+  const [loading, setLoading] = useState(() => !getSavedAuditWindow('resources', crawlId, INITIAL_WINDOW_OPTIONS));
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CrawledResource | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
+    const options = { offset: (page - 1) * pageSize, limit: pageSize, filter, sort: sort.key, direction: sort.direction, query: sharedSearch.trim() };
+    const cached = getSavedAuditWindow<CrawlHistoryResourceWindow>('resources', crawlId, options);
+    if (cached) {
+      setResourceWindow(cached); setLoading(false); setError(null);
+      return () => controller.abort();
+    }
     const timer = window.setTimeout(() => {
       setLoading(true); setError(null);
-      void crawlerClient.historyResources(crawlId, {
-        offset: (page - 1) * pageSize, limit: pageSize, filter, sort: sort.key, direction: sort.direction, query: sharedSearch.trim()
-      }).then(result => {
+      void loadSavedAuditWindow('resources', crawlId, options, () => crawlerClient.historyResources(crawlId, options)).then(result => {
         if (!controller.signal.aborted) setResourceWindow(result);
       }).catch(reason => {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Could not load saved audit resources.');
