@@ -58,6 +58,7 @@ let persistentSessionsLoaded = false;
 let sessionHydrationPromise = null;
 const scryptAsync = promisify(scrypt);
 const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://crawler.thilisadiki.com').replace(/\/$/, '');
+const LEGACY_PUBLIC_HOSTS = new Set(['workva.co.za', 'www.workva.co.za']);
 const crawlNetworkPolicy = new CrawlNetworkPolicy();
 const ALLOWED_CRAWL_REGIONS = new Set(['auto', ...Object.keys(GEO_PRESETS)]);
 const STRICT_CONTENT_SECURITY_POLICY = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self'; script-src 'self'; font-src 'self'";
@@ -77,6 +78,15 @@ app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', STRICT_CONTENT_SECURITY_POLICY);
   if (isSecureRequest(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
+});
+// Keep old shared links working while the legacy domain remains registered.
+// This runs before every public and private route so the exact path and query
+// string move to the new canonical hostname in a single permanent redirect.
+app.use((req, res, next) => {
+  const host = (req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '');
+  if (!LEGACY_PUBLIC_HOSTS.has(host)) return next();
+  const target = new URL(req.originalUrl.startsWith('/') ? req.originalUrl : '/', `${PUBLIC_APP_URL}/`);
+  return res.redirect(301, target.toString());
 });
 app.use(['/admin', '/api', '/next'], preventIndexing);
 registerPublicRoutes(app, {
