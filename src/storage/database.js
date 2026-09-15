@@ -192,6 +192,22 @@ export class CrawlStorage {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    await this.pool.query(`
+      CREATE TABLE IF NOT EXISTS signup_verifications (
+        id CHAR(36) NOT NULL PRIMARY KEY,
+        name VARCHAR(160) NOT NULL,
+        email VARCHAR(254) NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        verified_at DATETIME NULL,
+        used_at DATETIME NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_signup_email (email),
+        UNIQUE KEY uq_signup_token (token_hash),
+        INDEX idx_signup_expiry (expires_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     // Authentication cookies only contain a signed reference. The session
     // record lives here so a Node process restart does not sign everyone out.
     // Revocation and expiry remain server-enforced on every authenticated call.
@@ -283,6 +299,40 @@ export class CrawlStorage {
       if (error.code === 'ER_DUP_ENTRY') throw new Error('That username is already in use.');
       throw error;
     }
+  }
+
+  async createSignup({ id, name, email, tokenHash, expiresAt }) {
+    if (!(await this.initialize()) || !this.pool) throw new Error('Persistent user storage is not connected.');
+    await this.pool.execute(
+      `INSERT INTO signup_verifications (id, name, email, token_hash, expires_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE name = VALUES(name), token_hash = VALUES(token_hash), expires_at = VALUES(expires_at), verified_at = NULL, used_at = NULL`,
+      [id, name, email, tokenHash, new Date(expiresAt)]
+    );
+  }
+
+  async findSignupByToken(tokenHash) {
+    if (!(await this.initialize()) || !this.pool) return null;
+    const [rows] = await this.pool.execute(
+      `SELECT id, name, email, token_hash AS tokenHash, expires_at AS expiresAt, verified_at AS verifiedAt, used_at AS usedAt
+       FROM signup_verifications WHERE token_hash = ? LIMIT 1`, [tokenHash]
+    );
+    return rows[0] || null;
+  }
+
+  async completeSignup({ signupId, userId, username, passwordHash }) {
+    if (!(await this.initialize()) || !this.pool) throw new Error('Persistent user storage is not connected.');
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [[signup]] = await connection.execute('SELECT * FROM signup_verifications WHERE id = ? FOR UPDATE', [signupId]);
+      if (!signup || signup.used_at || signup.expires_at <= new Date()) throw new Error('This verification link is invalid or expired.');
+      await connection.execute(`INSERT INTO app_users (id, username, password_hash, role, status) VALUES (?, ?, ?, 'auditor', 'active')`, [userId, username, passwordHash]);
+      await connection.execute('UPDATE signup_verifications SET verified_at = CURRENT_TIMESTAMP, used_at = CURRENT_TIMESTAMP WHERE id = ?', [signupId]);
+      await connection.commit();
+      return { id: userId, username, role: 'auditor', status: 'active' };
+    } catch (error) { await connection.rollback().catch(() => {}); throw error; }
+    finally { connection.release(); }
   }
 
   async createAuthSession(session) {

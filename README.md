@@ -7,7 +7,7 @@ Browser-rendered SEO auditing with a React + TypeScript dashboard, an Express cr
 The complete user, operator and developer guide now lives in the public, browser-readable [documentation file](src/public/info/docs.html).
 
 - Local: [http://localhost:3000/docs](http://localhost:3000/docs)
-- Hosted (after deployment): [https://workva.co.za/docs](https://workva.co.za/docs)
+- Hosted (after deployment): [https://crawler.thilisadiki.com/docs](https://crawler.thilisadiki.com/docs)
 - No login is needed to read documentation. Dashboard, admin, API and exports remain private.
 
 The guide covers crawl settings and depth, content detection, redirects, resources, shared SEO rules, exports, saved history, concurrency, access controls, environment variables, API endpoints and troubleshooting. It includes a contents menu, mobile layouts and print styling for saving a PDF.

@@ -57,7 +57,7 @@ const auditorSessions = new Map();
 let persistentSessionsLoaded = false;
 let sessionHydrationPromise = null;
 const scryptAsync = promisify(scrypt);
-const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://workva.co.za').replace(/\/$/, '');
+const PUBLIC_APP_URL = (process.env.PUBLIC_APP_URL || 'https://crawler.thilisadiki.com').replace(/\/$/, '');
 const crawlNetworkPolicy = new CrawlNetworkPolicy();
 const ALLOWED_CRAWL_REGIONS = new Set(['auto', ...Object.keys(GEO_PRESETS)]);
 const STRICT_CONTENT_SECURITY_POLICY = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self'; script-src 'self'; font-src 'self'";
@@ -83,6 +83,8 @@ registerPublicRoutes(app, {
   publicDir: path.join(__dirname, 'src', 'public'),
   publicAppUrl: PUBLIC_APP_URL,
   requireDashboardAccess,
+  crawlStorage,
+  hashAuditorPassword,
   staticMiddleware: express.static(path.join(__dirname, 'src', 'public'))
 });
 

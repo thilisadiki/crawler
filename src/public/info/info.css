@@ -39,7 +39,7 @@ a { color: var(--primary); }
 .primary-link, .text-link { display: inline-flex; align-items: center; min-height: 44px; text-decoration: none; font-weight: 700; }
 .primary-link { padding: 0 18px; color: #fff; background: var(--primary); border-radius: 8px; box-shadow: 0 5px 12px rgba(37, 99, 235, .2); }
 .primary-link:hover { background: #1d4ed8; }
-.text-link { margin-left: 18px; }
+.text-link { margin-left: 18px; font-weight: 650; }
 .feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .feature-grid .card { margin: 0; min-height: 176px; }
 .home-section { margin-top: 40px; }
@@ -48,6 +48,12 @@ a { color: var(--primary); }
 .faq summary { cursor: pointer; color: var(--ink); font-weight: 700; }
 .faq details p { margin: 10px 0 0; }
 .small-print { color: var(--muted); font-size: .82rem; }
+form { display: grid; gap: 16px; max-width: 520px; }
+label { display: grid; gap: 6px; color: var(--ink); font-weight: 650; }
+input { width: 100%; min-height: 44px; padding: 9px 11px; border: 1px solid #cbd5e1; border-radius: 7px; font: inherit; }
+form button { border: 0; cursor: pointer; font: inherit; justify-self: start; }
+form button:disabled { opacity: .65; cursor: wait; }
+.notice { padding: 14px 16px; border-left: 4px solid #93c5fd; background: #eff6ff; color: #1e3a8a; }
 .site-footer { display: flex; justify-content: space-between; gap: 20px; padding: 24px 0 36px; color: var(--muted); font-size: .85rem; }
 .site-nav { display: flex; flex-wrap: wrap; gap: 14px; }
 @media (max-width: 640px) {
